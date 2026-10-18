@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">WifiDoctor</string>
+    <string name="notification_channel_name">Wi-Fi problems</string>
+    <string name="notification_channel_description">Alerts from scheduled Wi-Fi checks</string>
+</resources>

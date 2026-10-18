@@ -110,6 +110,16 @@ class DiagnosticEngineTest {
     }
 
     @Test
+    fun `internet step is red even when the router is blamed`() = runTest {
+        val prober = FakeProber(mapOf("192.168.1.1" to List(10) { null }, "1.1.1.1" to List(10) { null }, "8.8.8.8" to List(10) { null }))
+        val events = engine(prober = prober).run().toList()
+        val states = events.filterIsInstance<EngineEvent.StepFinished>().associate { it.layer to it.state }
+        assertEquals(StepState.FAIL, states[Layer.GATEWAY])
+        assertEquals(StepState.FAIL, states[Layer.INTERNET])
+        assertEquals(Layer.GATEWAY, (events.last() as EngineEvent.Finished).diagnosis.layer)
+    }
+
+    @Test
     fun `dns uses the network's server versus the reference`() = runTest {
         val dns = FakeDns(300.0, 20.0)
         val events = engine(dns = dns).run().toList()

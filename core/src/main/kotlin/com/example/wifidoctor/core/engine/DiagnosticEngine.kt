@@ -76,7 +76,7 @@ class DiagnosticEngine(
     fun run(config: RunConfig = RunConfig()): Flow<EngineEvent> = channelFlow {
         var m = Measurements(timestampMs = clock(), link = null)
         suspend fun finish(layer: Layer, summary: String) {
-            send(EngineEvent.StepFinished(layer, diagnoser.layerSeverity(m, layer).toStepState(), summary))
+            send(EngineEvent.StepFinished(layer, stepState(m, layer), summary))
         }
         suspend fun skip(layer: Layer, why: String) = send(EngineEvent.StepFinished(layer, StepState.SKIPPED, why))
 
@@ -148,6 +148,19 @@ class DiagnosticEngine(
         }
 
         send(EngineEvent.Finished(m, diagnoser.diagnose(m)))
+    }
+
+    /**
+     * Stepper state for a layer: the worst finding attributed to it, plus raw failures whose
+     * diagnosis lands on an earlier layer (no internet target answering is still a red step).
+     */
+    private fun stepState(m: Measurements, layer: Layer): StepState {
+        val rawFail = when (layer) {
+            Layer.INTERNET -> m.internet.isNotEmpty() && m.internet.all { it.allLost }
+            Layer.DNS -> m.dns?.let { it.systemAvgMs == null && it.referenceAvgMs == null } ?: false
+            else -> false
+        }
+        return if (rawFail) StepState.FAIL else diagnoser.layerSeverity(m, layer).toStepState()
     }
 
     companion object {
