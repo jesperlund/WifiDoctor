@@ -12,6 +12,7 @@ import com.example.wifidoctor.ui.rooms.WalkPhase
 import com.example.wifidoctor.ui.settings.SettingsViewModel
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.advanceUntilIdle
@@ -25,6 +26,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class RoomsViewModelTest {
     @get:Rule val main = MainDispatcherRule()
 
@@ -101,6 +103,7 @@ class RoomsViewModelTest {
     }
 }
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class HistoryViewModelTest {
     @get:Rule val main = MainDispatcherRule()
 
@@ -149,6 +152,7 @@ class HistoryViewModelTest {
     }
 }
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class SettingsViewModelTest {
     @get:Rule val main = MainDispatcherRule()
 

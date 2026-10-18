@@ -7,6 +7,7 @@ import com.example.wifidoctor.core.model.Severity
 import com.example.wifidoctor.data.AppSettings
 import com.example.wifidoctor.di.EngineFactory
 import com.example.wifidoctor.ui.dashboard.DashboardViewModel
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runCurrent
@@ -19,6 +20,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 
+@OptIn(ExperimentalCoroutinesApi::class)
 class DashboardViewModelTest {
     @get:Rule val main = MainDispatcherRule()
 
