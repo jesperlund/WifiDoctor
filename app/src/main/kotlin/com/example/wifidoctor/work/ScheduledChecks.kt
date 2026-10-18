@@ -27,6 +27,7 @@ import com.example.wifidoctor.data.SettingsRepository
 import com.example.wifidoctor.di.EngineFactory
 import com.example.wifidoctor.platform.EnvironmentMonitor
 import com.example.wifidoctor.platform.PermissionChecker
+import com.example.wifidoctor.platform.RegionHintsProvider
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -69,6 +70,7 @@ class DiagnosticWorker @AssistedInject constructor(
     private val settingsRepository: SettingsRepository,
     private val environment: EnvironmentMonitor,
     private val notifier: ProblemNotifier,
+    private val regionHints: RegionHintsProvider,
 ) : CoroutineWorker(appContext, params) {
 
     override suspend fun doWork(): Result {
@@ -78,7 +80,7 @@ class DiagnosticWorker @AssistedInject constructor(
         val settings = settingsRepository.settings.first()
         val engine = engineFactory.create(settings)
         val finished = withTimeoutOrNull(TIMEOUT_MS) {
-            engine.run(settings.toRunConfig(metered = env.wifiMetered, background = true))
+            engine.run(settings.toRunConfig(metered = env.wifiMetered, background = true, regionHints.hints(settings.countryOverride)))
                 .filterIsInstance<EngineEvent.Finished>()
                 .first()
         } ?: return Result.retry()

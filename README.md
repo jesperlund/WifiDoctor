@@ -49,7 +49,7 @@ Stack: Kotlin, Jetpack Compose (Material 3, dynamic colour, light/dark), a singl
 | 3 | Internet | The same probes to each target (default `1.1.1.1`, `8.8.8.8`) |
 | 4 | DNS | 5 lookups via the network's DNS server (raw UDP query, uncached; system resolver if unknown) vs. `1.1.1.1` |
 | 5 | Throughput | Download from the configurable URL (default Cloudflare's speed endpoint) for ≤10 s / ≤50 MB, with progress and cancellation |
-| 6 | Congestion | Wi-Fi scan; counts networks on the same channel and on overlapping channels |
+| 6 | Congestion + channel plan | Wi-Fi scan; counts networks on the same / overlapping channels, then surveys **2.4 GHz and 5 GHz (and 6 GHz where permitted) regardless of which band you are connected to**, and suggests the best channel each band may legally use in your country |
 
 If the phone is not connected, layers 2–6 are skipped. Every probe runs on `Dispatchers.IO` with connect/read timeouts and checks for cancellation between samples, and the whole run can be cancelled from the UI.
 
@@ -68,15 +68,35 @@ If the phone is not connected, layers 2–6 are skipped. Every probe runs on `Di
 | No internet | gateway unknown and no internet target answers | FAIL / internet |
 | Slow / failing DNS | pings fine, but system DNS > 2× reference and ≥ 50 ms slower, or failing → switch DNS | WARN/FAIL / DNS |
 | Crowded channel | ≥ 4 networks on the same channel, or ≥ 6 same + overlapping | WARN / congestion |
+| Channel plan | your router's channel on any band is not permitted in the detected country, a permitted channel is clearly quieter (score ≥ 1.0 lower and ≥ 1.5× better), or 2.4 GHz uses 40 MHz among ≥ 3 neighbours | WARN / congestion |
 | Slow download | < 5 Mbps | WARN / throughput |
 
 All thresholds live in `DiagnoserConfig`.
+
+**Channel suggestions (all bands, region-aware).** `core/wifi/Regulatory.kt` holds simplified indoor channel tables per regulatory domain:
+
+| Domain | Countries | 2.4 GHz | 5 GHz | 6 GHz |
+|--------|-----------|---------|-------|-------|
+| FCC | US (+ territories), MX, BR | 1–11 | 36–64, 100–144, 149–165 | 1–233 |
+| ISED | CA | 1–11 | as FCC minus 120–128 | 1–233 |
+| ETSI | EU/EEA, CH, TR, Balkans | 1–13 | 36–64, 100–140 | 1–93 |
+| Ofcom | GB | 1–13 | 36–64, 100–140, 149–165 | 1–93 |
+| MIC | JP | 1–13 | 36–64, 100–144 | 1–93 |
+| MIIT | CN | 1–13 | 36–64, 149–165 | – |
+| ACMA | AU, NZ | 1–13 | 36–64, 100–116, 132–144, 149–165 | 1–93 |
+| WPC | IN | 1–13 | 36–64, 149–165 | – |
+| MSIT | KR | 1–13 | 36–64, 100–144, 149–165 | 1–233 |
+| Unknown | anything else | 1–11 | 36–48 | – |
+
+The country comes from, in order: the **Settings override**, the 802.11d **country element broadcast by nearby access points** (majority vote; Android 11+), the **mobile network** country, the **SIM**, then the **device locale**. The source is shown next to the advice. A channel is only called "not permitted" when the country is known.
+
+`ChannelPlanner` scores every permitted channel per band: each overlapping neighbour adds a weight based on its signal strength (−70 dBm = 1.0, −40 dBm = 2.0). On 2.4 GHz a partially overlapping neighbour counts 1.5× (adjacent-channel interference is worse than sharing a channel). Your own router's BSSIDs (same SSID) are excluded. 2.4 GHz is planned at 20 MHz, preferring 1/6/11 on ties and penalising 12/13 (US-market devices can't use them). 5/6 GHz use the widest permitted 80/40/20 MHz block, with a small penalty for DFS (radar) channels. 6 GHz uses preferred scanning channels. A change is only advised when it clearly helps, since switching channel briefly disconnects everyone. The Dashboard shows a per-band card with an occupancy bar chart (★ suggested, • yours).
 
 ## Permissions
 
 | Permission | Why |
 |------------|-----|
-| `ACCESS_FINE_LOCATION` + `ACCESS_COARSE_LOCATION` | Android treats SSID, BSSID and scan results as location data. Android 12+ requires asking for both. |
+| `ACCESS_FINE_LOCATION` + `ACCESS_COARSE_LOCATION` | Android treats SSID, BSSID and scan results as location data. Android 12+ requires asking for both. GPS is never used: the country for channel rules comes from access points and the mobile network. |
 | `NEARBY_WIFI_DEVICES` (Android 13+) | Wi-Fi scans. Not flagged `neverForLocation`, because that would let Android strip the BSSIDs that band-steering detection needs. |
 | `ACCESS_WIFI_STATE`, `CHANGE_WIFI_STATE` | Read Wi-Fi info and call `startScan()`. |
 | `ACCESS_NETWORK_STATE`, `INTERNET` | Network callbacks, probes and the speed test. |
@@ -93,6 +113,7 @@ Privacy: no analytics, no ads, no crash reporting, no accounts. The only traffic
 - **No raw ICMP.** Apps cannot open raw sockets without root. The main probe times TCP handshakes to ports 53/443/80 (whichever answers first): both SYN-ACK and RST ("connection refused") are full round trips. If every port is silently dropped, the app falls back to `/system/bin/ping` through `ProcessBuilder`, which exists on most but not all devices. Ping cannot be bound to the Wi-Fi network.
 - **Scan throttling.** Android 9+ allows 4 scans per 2 minutes in the foreground and 1 per 30 minutes in the background. When `startScan()` is refused, the app uses cached results and labels the congestion step "(cached scan)".
 - **Channel width** is not in `WifiInfo`, so it comes from the scan entry of the connected BSSID and may be missing until a scan has run.
+- **Regulatory data is simplified:** indoor rules only, no power limits, and no outdoor or very recent rule changes. Access points' country elements need Android 11+. Your router may also offer fewer channels than the law allows. Use the Settings override if the detected country is wrong.
 - **Wi-Fi standard** (`getWifiStandard`) needs Android 11. On older versions, link-speed expectations fall back to per-band defaults.
 - **Background checks** cannot read the SSID/BSSID without `ACCESS_BACKGROUND_LOCATION`, which the app deliberately does not request. WorkManager may also defer runs (Doze, battery saver), and the minimum interval is 15 minutes.
 - **DNS caching.** The system resolver caches results, so the app sends uncached raw UDP queries to the network's DNS server for a fair comparison. With Private DNS (DoT) on, apps actually use the DoT server and the comparison is approximate.

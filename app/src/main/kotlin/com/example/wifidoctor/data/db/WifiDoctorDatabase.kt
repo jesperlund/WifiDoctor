@@ -5,6 +5,8 @@ import androidx.room.Database
 import androidx.room.Insert
 import androidx.room.Query
 import androidx.room.RoomDatabase
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 import kotlinx.coroutines.flow.Flow
 
 @Dao
@@ -31,11 +33,21 @@ interface RunDao {
     suspend fun clear()
 }
 
-@Database(entities = [RunEntity::class], version = 1, exportSchema = false)
+@Database(entities = [RunEntity::class], version = 2, exportSchema = false)
 abstract class WifiDoctorDatabase : RoomDatabase() {
     abstract fun runDao(): RunDao
 
     companion object {
         const val NAME = "wifidoctor.db"
+
+        /** v2: region and per-band channel advice. Existing runs keep NULLs. */
+        val MIGRATION_1_2 = object : Migration(1, 2) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                listOf(
+                    "countryCode TEXT", "routerChannel24 INTEGER", "suggestedChannel24 INTEGER",
+                    "routerChannel5 INTEGER", "suggestedChannel5 INTEGER", "suggestedWidth5 INTEGER",
+                ).forEach { db.execSQL("ALTER TABLE runs ADD COLUMN $it") }
+            }
+        }
     }
 }

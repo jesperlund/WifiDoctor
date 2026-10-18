@@ -209,6 +209,22 @@ class SettingsViewModelTest {
     }
 
     @Test
+    fun `country override is validated and normalised`() = runTest {
+        backgroundScope.launch(UnconfinedTestDispatcher(testScheduler)) { vm.uiState.collect() }
+        assertFalse(vm.setCountryOverride("Germany"))
+        assertFalse(vm.setCountryOverride("D1"))
+        advanceUntilIdle()
+        assertNotNull(vm.uiState.value.countryError)
+        assertTrue(vm.setCountryOverride(" de "))
+        advanceUntilIdle()
+        assertEquals("DE", settings.state.value.countryOverride)
+        assertNull(vm.uiState.value.countryError)
+        assertTrue(vm.setCountryOverride(""))
+        advanceUntilIdle()
+        assertEquals("", settings.state.value.countryOverride)
+    }
+
+    @Test
     fun `toggles are persisted`() = runTest {
         vm.setNotifyOnlyOnProblems(false)
         vm.setUsePingFallback(false)

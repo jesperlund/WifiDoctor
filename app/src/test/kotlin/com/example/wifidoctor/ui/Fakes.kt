@@ -6,6 +6,7 @@ import com.example.wifidoctor.core.history.RunRecord
 import com.example.wifidoctor.core.model.EnvironmentStatus
 import com.example.wifidoctor.core.model.LinkInfo
 import com.example.wifidoctor.core.model.ProbeStats
+import com.example.wifidoctor.core.model.ScanEntry
 import com.example.wifidoctor.core.model.ScanSnapshot
 import com.example.wifidoctor.core.model.ThroughputResult
 import com.example.wifidoctor.core.model.WifiStandard
@@ -118,10 +119,11 @@ fun fakeEngineFactory(
     prober: LatencyProber = FakeProber(),
     throughput: ThroughputTester = FakeThroughput(),
     linkSource: LinkSource = LinkSource { link },
+    scan: List<ScanEntry> = emptyList(),
 ): EngineFactory = EngineFactory {
     DiagnosticEngine(
         linkSource = linkSource,
-        scanSource = { ScanSnapshot(emptyList(), throttled = false) },
+        scanSource = { ScanSnapshot(scan, throttled = false) },
         prober = prober,
         dnsTimer = FakeDnsTimer(),
         throughputTester = throughput,

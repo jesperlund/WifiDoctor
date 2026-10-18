@@ -43,6 +43,7 @@ import com.example.wifidoctor.core.model.EnvironmentIssue
 import com.example.wifidoctor.core.model.EnvironmentStatus
 import com.example.wifidoctor.core.model.LinkInfo
 import com.example.wifidoctor.core.probe.ThroughputProgress
+import com.example.wifidoctor.ui.components.ChannelAdviceCard
 import com.example.wifidoctor.ui.components.DiagnosisCard
 import com.example.wifidoctor.ui.components.LayerStepper
 import com.example.wifidoctor.ui.components.NoticeCard
@@ -94,6 +95,7 @@ fun DashboardScreen(
             }
         }
         state.diagnosis?.let { d -> item { DiagnosisCard(d, title = "Result") } }
+        state.channels?.let { c -> item { ChannelAdviceCard(c) } }
     }
 }
 

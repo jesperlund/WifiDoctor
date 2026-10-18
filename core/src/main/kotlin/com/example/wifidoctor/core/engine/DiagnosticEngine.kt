@@ -13,6 +13,9 @@ import com.example.wifidoctor.core.probe.LatencyProber
 import com.example.wifidoctor.core.probe.Resolver
 import com.example.wifidoctor.core.probe.ThroughputProgress
 import com.example.wifidoctor.core.probe.ThroughputTester
+import com.example.wifidoctor.core.wifi.ChannelPlanner
+import com.example.wifidoctor.core.wifi.RegionHints
+import com.example.wifidoctor.core.wifi.RegionResolver
 import com.example.wifidoctor.core.wifi.WifiMath
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.channelFlow
@@ -38,6 +41,8 @@ data class RunConfig(
     val runThroughput: Boolean = true,
     val throughputMaxDurationMs: Long = 10_000,
     val runScan: Boolean = true,
+    /** Country hints for channel regulations; access-point country elements are added from the scan. */
+    val regionHints: RegionHints = RegionHints(),
 ) {
     companion object {
         const val DEFAULT_THROUGHPUT_URL = "https://speed.cloudflare.com/__down?bytes=25000000"
@@ -140,11 +145,14 @@ class DiagnosticEngine(
             skip(Layer.CONGESTION, if (config.runScan) "Scanning unavailable" else "Scan turned off")
         } else {
             val enrichedLink = enrichFromScan(link, scan)
-            m = m.copy(link = enrichedLink, scan = scan, congestion = WifiMath.congestion(enrichedLink, scan.entries))
-            val c = m.congestion
-            val summary = if (c == null) "Channel unknown" else "${c.sameChannel} same, ${c.overlapping} overlapping" +
-                if (scan.throttled) " (cached scan)" else ""
-            finish(Layer.CONGESTION, summary)
+            val region = RegionResolver.resolve(config.regionHints, scan.entries.map { it.countryCode })
+            m = m.copy(
+                link = enrichedLink,
+                scan = scan,
+                congestion = WifiMath.congestion(enrichedLink, scan.entries),
+                channels = ChannelPlanner.analyze(enrichedLink, scan.entries, region),
+            )
+            finish(Layer.CONGESTION, congestionSummary(m, scan.throttled))
         }
 
         send(EngineEvent.Finished(m, diagnoser.diagnose(m)))
@@ -164,6 +172,13 @@ class DiagnosticEngine(
     }
 
     companion object {
+        fun congestionSummary(m: Measurements, throttled: Boolean): String {
+            val c = m.congestion
+            val base = if (c == null) "Channel unknown" else "${c.sameChannel} same, ${c.overlapping} overlapping"
+            val best = m.channels?.bands.orEmpty().mapNotNull { b -> b.recommended?.let { "${b.band.label} ch ${it.channel}" } }
+            return base + (if (best.isEmpty()) "" else " · best: " + best.joinToString(", ")) + (if (throttled) " (cached scan)" else "")
+        }
+
         /** Fills in the channel width (not exposed by WifiInfo) from our own BSSID's scan entry. */
         fun enrichFromScan(link: LinkInfo, scan: ScanSnapshot): LinkInfo {
             if (link.channelWidthMhz != null || link.bssid == null) return link

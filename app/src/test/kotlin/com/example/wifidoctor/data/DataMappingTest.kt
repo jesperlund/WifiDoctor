@@ -26,7 +26,9 @@ class DataMappingTest {
             linkSpeedMbps = 400, frequencyMhz = 5180, band = Band.GHZ_5, channel = 36, channelWidthMhz = 80,
             standard = WifiStandard.AX, gatewayIp = "192.168.0.1", gatewayAvgMs = 3.5, gatewayLossPercent = 0.0,
             internetTarget = "1.1.1.1", internetAvgMs = 18.0, dnsSystemMs = 40.0, dnsReferenceMs = 15.0,
-            throughputMbps = 210.5, sameChannelNetworks = 2, overlappingNetworks = 1, severity = Severity.WARN,
+            throughputMbps = 210.5, sameChannelNetworks = 2, overlappingNetworks = 1, countryCode = "DE",
+            routerChannel24 = 11, suggestedChannel24 = 1, routerChannel5 = 36, suggestedChannel5 = 100, suggestedWidth5 = 80,
+            severity = Severity.WARN,
             layer = Layer.DNS, verdict = "Slow DNS", explanation = "why", fixes = listOf("one", "two"),
         )
         assertEquals(r, r.toEntity().toRecord())
@@ -63,6 +65,9 @@ class DataMappingTest {
         assertFalse(SettingsValidation.isValidUrl("ftp://example.com/file"))
         assertFalse(SettingsValidation.isValidUrl("not a url"))
         assertFalse(SettingsValidation.isValidUrl("https://"))
+        assertTrue(SettingsValidation.isValidCountry(""))
+        assertTrue(SettingsValidation.isValidCountry("gb"))
+        assertFalse(SettingsValidation.isValidCountry("GBR"))
     }
 
     @Test
@@ -75,6 +80,8 @@ class DataMappingTest {
         assertTrue(s.copy(speedTestInBackground = true).toRunConfig(metered = false, background = true).runThroughput)
         assertEquals(listOf("9.9.9.9"), s.toRunConfig(false).internetTargets)
         assertEquals(AppSettings.DEFAULT_TARGETS, s.copy(probeTargets = emptyList()).toRunConfig(false).internetTargets)
+        val hints = com.example.wifidoctor.core.wifi.RegionHints(override = "FR")
+        assertEquals(hints, s.toRunConfig(false, regionHints = hints).regionHints)
     }
 
     @Test
@@ -95,6 +102,11 @@ class DataMappingTest {
         assertEquals(320, WifiMappers.channelWidthMhz(5))
         assertNull(WifiMappers.channelWidthMhz(-1))
         assertEquals("192.168.1.1", WifiMappers.ipv4FromInt(0x0101A8C0))
+        assertEquals("DE", WifiMappers.countryFromElement("DE ".toByteArray() + byteArrayOf(1, 13, 20)))
+        assertEquals("US", WifiMappers.countryFromElement("usO".toByteArray()))
+        assertNull(WifiMappers.countryFromElement(byteArrayOf(0, 0, 0)))
+        assertNull(WifiMappers.countryFromElement(byteArrayOf(68)))
+        assertNull(WifiMappers.countryFromElement(null))
         assertNull(WifiMappers.ipv4FromInt(0))
     }
 

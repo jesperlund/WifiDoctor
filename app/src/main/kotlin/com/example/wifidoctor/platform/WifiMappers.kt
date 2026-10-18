@@ -44,6 +44,18 @@ object WifiMappers {
         else -> null
     }
 
+    /**
+     * 802.11d Country information element (ID 7): the first two bytes are the ISO country code.
+     * Returns null for missing/garbage values.
+     */
+    fun countryFromElement(bytes: ByteArray?): String? {
+        if (bytes == null || bytes.size < 2) return null
+        val code = String(bytes, 0, 2, Charsets.US_ASCII).uppercase()
+        return code.takeIf { it.all { c -> c in 'A'..'Z' } }
+    }
+
+    const val ELEMENT_ID_COUNTRY = 7
+
     /** DhcpInfo stores IPv4 addresses as little-endian ints. */
     fun ipv4FromInt(value: Int): String? {
         if (value == 0) return null

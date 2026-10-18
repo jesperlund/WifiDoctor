@@ -97,6 +97,7 @@ object CsvExporter {
         "gateway_jitter_ms", "gateway_loss_pct", "internet_target", "internet_avg_ms", "internet_max_ms",
         "internet_jitter_ms", "internet_loss_pct", "dns_system_ms", "dns_reference_ms", "throughput_mbps",
         "same_channel_networks", "overlapping_networks", "severity", "layer", "verdict", "fixes",
+        "country", "router_channel_24", "suggested_channel_24", "router_channel_5", "suggested_channel_5", "suggested_width_5",
     )
 
     fun export(records: List<RunRecord>): String = buildString {
@@ -109,6 +110,7 @@ object CsvExporter {
                 r.internetAvgMs?.fmt(), r.internetMaxMs?.fmt(), r.internetJitterMs?.fmt(), r.internetLossPercent?.fmt(),
                 r.dnsSystemMs?.fmt(), r.dnsReferenceMs?.fmt(), r.throughputMbps?.fmt(), r.sameChannelNetworks,
                 r.overlappingNetworks, r.severity.name, r.layer?.name, r.verdict, r.fixes.joinToString(" | "),
+                r.countryCode, r.routerChannel24, r.suggestedChannel24, r.routerChannel5, r.suggestedChannel5, r.suggestedWidth5,
             )
             appendLine(cells.joinToString(",") { escape(it?.toString()) })
         }

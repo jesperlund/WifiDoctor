@@ -135,7 +135,20 @@ class AndroidScanSource @Inject constructor(
         frequencyMhz = frequency,
         rssiDbm = level,
         channelWidthMhz = WifiMappers.channelWidthMhz(channelWidth),
+        countryCode = countryCode(),
     )
+
+    /** The AP's advertised regulatory country (Android 11+ exposes information elements). */
+    private fun ScanResult.countryCode(): String? {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return null
+        return runCatching {
+            informationElements.firstOrNull { it.id == WifiMappers.ELEMENT_ID_COUNTRY }?.let { ie ->
+                val buffer = ie.bytes.duplicate()
+                val bytes = ByteArray(buffer.remaining()).also { buffer.get(it) }
+                WifiMappers.countryFromElement(bytes)
+            }
+        }.getOrNull()
+    }
 
     private companion object {
         const val SCAN_TIMEOUT_MS = 10_000L

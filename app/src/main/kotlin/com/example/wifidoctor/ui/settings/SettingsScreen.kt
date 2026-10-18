@@ -141,6 +141,27 @@ fun SettingsScreen(snackbar: SnackbarHostState, viewModel: SettingsViewModel = h
                 )
                 OutlinedButton(onClick = { viewModel.setProbeTargets(targets) }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Save targets") }
 
+                var country by rememberSaveable(s.countryOverride) { mutableStateOf(s.countryOverride) }
+                OutlinedTextField(
+                    value = country,
+                    onValueChange = { country = it.take(2) },
+                    label = { Text("Country for channel rules") },
+                    placeholder = { Text("Automatic") },
+                    isError = state.countryError != null,
+                    supportingText = {
+                        Text(
+                            state.countryError
+                                ?: "Leave empty to detect it from nearby routers or the mobile network. Use a code such as US, DE or GB.",
+                        )
+                    },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii),
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedButton(onClick = { viewModel.setCountryOverride(country) }, modifier = Modifier.heightIn(min = 48.dp)) {
+                    Text("Save country")
+                }
+
                 SwitchRow("Use ping as a fallback probe", s.usePingFallback, viewModel::setUsePingFallback)
                 SwitchRow("Run speed test on metered Wi-Fi", s.speedTestOnMetered, viewModel::setSpeedTestOnMetered)
                 TextButton(onClick = { viewModel.resetDefaults() }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Restore default test settings") }

@@ -36,6 +36,13 @@ data class RunRecord(
     val throughputMbps: Double? = null,
     val sameChannelNetworks: Int? = null,
     val overlappingNetworks: Int? = null,
+    /** Country used for channel rules, and the router's current vs. suggested channel per band. */
+    val countryCode: String? = null,
+    val routerChannel24: Int? = null,
+    val suggestedChannel24: Int? = null,
+    val routerChannel5: Int? = null,
+    val suggestedChannel5: Int? = null,
+    val suggestedWidth5: Int? = null,
     val severity: Severity,
     val layer: Layer? = null,
     val verdict: String,
@@ -46,6 +53,8 @@ data class RunRecord(
         fun from(m: Measurements, d: Diagnosis, roomLabel: String? = null): RunRecord {
             val link = m.link
             val inet = m.internetSummary
+            val b24 = m.channels?.band(Band.GHZ_2_4)
+            val b5 = m.channels?.band(Band.GHZ_5)
             return RunRecord(
                 timestampMs = m.timestampMs,
                 roomLabel = roomLabel?.trim()?.takeIf { it.isNotEmpty() },
@@ -73,6 +82,12 @@ data class RunRecord(
                 throughputMbps = m.throughput?.mbps,
                 sameChannelNetworks = m.congestion?.sameChannel,
                 overlappingNetworks = m.congestion?.overlapping,
+                countryCode = m.channels?.region?.countryCode,
+                routerChannel24 = b24?.current?.channel,
+                suggestedChannel24 = b24?.recommended?.channel,
+                routerChannel5 = b5?.current?.channel,
+                suggestedChannel5 = b5?.recommended?.channel,
+                suggestedWidth5 = b5?.recommended?.widthMhz,
                 severity = d.severity,
                 layer = d.layer,
                 verdict = d.verdict,

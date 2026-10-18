@@ -15,6 +15,8 @@ import com.example.wifidoctor.data.RunRepository
 import com.example.wifidoctor.data.SettingsRepository
 import com.example.wifidoctor.di.EngineFactory
 import com.example.wifidoctor.platform.EnvironmentMonitor
+import com.example.wifidoctor.platform.RegionHintsProvider
+import com.example.wifidoctor.core.wifi.ChannelAnalysis
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
@@ -37,6 +39,7 @@ data class DashboardUiState(
     val steps: List<StepUi> = Layer.entries.map { StepUi(it) },
     val throughput: ThroughputProgress? = null,
     val diagnosis: Diagnosis? = null,
+    val channels: ChannelAnalysis? = null,
     val savedRunId: Long? = null,
     val message: String? = null,
 )
@@ -48,6 +51,7 @@ class DashboardViewModel @Inject constructor(
     private val environmentMonitor: EnvironmentMonitor,
     private val repository: RunRepository,
     private val settingsRepository: SettingsRepository,
+    private val regionHints: RegionHintsProvider,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(DashboardUiState())
@@ -77,7 +81,7 @@ class DashboardViewModel @Inject constructor(
             try {
                 val settings = settingsRepository.settings.first()
                 val engine = engineFactory.create(settings)
-                engine.run(settings.toRunConfig(metered = env.wifiMetered)).collect { event -> onEvent(event) }
+                engine.run(settings.toRunConfig(metered = env.wifiMetered, regionHints = regionHints.hints(settings.countryOverride))).collect { event -> onEvent(event) }
             } catch (e: CancellationException) {
                 _uiState.update { s ->
                     s.copy(
@@ -111,7 +115,9 @@ class DashboardViewModel @Inject constructor(
             is EngineEvent.Throughput -> _uiState.update { it.copy(throughput = event.progress) }
             is EngineEvent.Finished -> {
                 val id = repository.save(RunRecord.from(event.measurements, event.diagnosis))
-                _uiState.update { it.copy(running = false, diagnosis = event.diagnosis, savedRunId = id, throughput = null) }
+                _uiState.update {
+                    it.copy(running = false, diagnosis = event.diagnosis, channels = event.measurements.channels, savedRunId = id, throughput = null)
+                }
             }
         }
     }

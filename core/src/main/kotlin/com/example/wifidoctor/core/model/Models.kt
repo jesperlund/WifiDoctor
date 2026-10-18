@@ -83,6 +83,8 @@ data class ScanEntry(
     val frequencyMhz: Int,
     val rssiDbm: Int,
     val channelWidthMhz: Int? = null,
+    /** Country from the access point's 802.11d country element, if it broadcasts one. */
+    val countryCode: String? = null,
 ) {
     val band: Band get() = com.example.wifidoctor.core.wifi.WifiMath.bandFor(frequencyMhz)
     val channel: Int? get() = com.example.wifidoctor.core.wifi.WifiMath.channelFor(frequencyMhz)
@@ -111,6 +113,8 @@ data class Measurements(
     val throughput: ThroughputResult? = null,
     val scan: ScanSnapshot? = null,
     val congestion: CongestionResult? = null,
+    /** Per-band channel survey (2.4, 5 and, where permitted, 6 GHz) with region-aware suggestions. */
+    val channels: com.example.wifidoctor.core.wifi.ChannelAnalysis? = null,
 ) {
     /** The best responding internet target (lowest loss, then latency) or null when none were probed. */
     val internetSummary: ProbeStats?

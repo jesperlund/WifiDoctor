@@ -92,7 +92,7 @@ class HistoryAnalysisTest {
         assertTrue(csv[1].contains("'=HYPERLINK(1)"))
         assertTrue(csv[1].contains(",-55,"))
         assertTrue(csv[1].contains("20.00"))
-        assertTrue(csv[1].endsWith("a | b"))
+        assertTrue(csv[1].contains("a | b"))
         assertEquals(CsvExporter.header.size, csv[1].split(Regex(""",(?=(?:[^"]*"[^"]*")*[^"]*$)""")).size)
     }
 

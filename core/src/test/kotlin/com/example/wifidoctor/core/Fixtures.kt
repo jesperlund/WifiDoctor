@@ -56,10 +56,11 @@ object Fixtures {
         throughput: ThroughputResult? = ThroughputResult("https://x", 50_000_000, 1_000, 400.0),
         scan: ScanSnapshot? = ScanSnapshot(emptyList(), throttled = false),
         congestion: CongestionResult? = CongestionResult(0, 1, 3),
+        channels: com.example.wifidoctor.core.wifi.ChannelAnalysis? = null,
     ) = Measurements(
         timestampMs = 1_700_000_000_000,
         link = link, gateway = gateway, internet = internet, dns = dns,
-        throughput = throughput, scan = scan, congestion = congestion,
+        throughput = throughput, scan = scan, congestion = congestion, channels = channels,
     )
 
     fun scanEntry(ssid: String? = "Neighbour", bssid: String? = "11:22:33:44:55:66", freq: Int = 2437, rssi: Int = -70, width: Int? = 20) =

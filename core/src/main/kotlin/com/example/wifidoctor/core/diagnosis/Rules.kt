@@ -6,6 +6,8 @@ import com.example.wifidoctor.core.model.Layer
 import com.example.wifidoctor.core.model.Measurements
 import com.example.wifidoctor.core.model.ProbeStats
 import com.example.wifidoctor.core.model.Severity
+import com.example.wifidoctor.core.wifi.ChannelOption
+import com.example.wifidoctor.core.wifi.Region
 import com.example.wifidoctor.core.wifi.WifiMath
 
 /** The built-in rule set. Each rule is independent and pure. */
@@ -24,6 +26,7 @@ object Rules {
             NoInternetRule,
             DnsRule,
             CongestionRule,
+            ChannelPlanRule,
             SlowThroughputRule,
         )
     }
@@ -302,10 +305,68 @@ object Rules {
                     (link?.channel?.let { " ($it)" } ?: "") + " and ${c.overlapping} more overlap it. " +
                     "Networks on the same air time take turns, which slows everyone down at busy times.",
                 fixes = buildList {
-                    add("Pick a less crowded channel in the router settings (or enable automatic channel selection).")
+                    val analysis = m.channels
+                    val plan = link?.let { analysis?.band(it.band) }
+                    val best = plan?.recommended
+                    if (analysis != null && plan != null && best != null && best.channel != plan.current?.channel) {
+                        add(channelFix(plan.band, best, analysis.region))
+                    } else {
+                        add("Pick a less crowded channel in the router settings (or enable automatic channel selection).")
+                    }
                     if (link?.band == Band.GHZ_2_4) add("Use the 5 GHz band, which has many more non-overlapping channels.")
                     add("On 2.4 GHz, use a 20 MHz channel width.")
                 },
+            )
+        }
+    }
+
+    /** Same wording everywhere so the Diagnoser's de-duplication merges identical advice. */
+    fun channelFix(band: Band, option: ChannelOption, region: Region): String = buildString {
+        append("In the router's settings, set the ${band.label} channel to ${option.channel} (${option.widthMhz} MHz)")
+        if (region.countryCode != null) append(", which is permitted in ${region.countryName ?: region.countryCode}")
+        append('.')
+        if (option.dfs) append(" It is a DFS (radar) channel: the router may pause for about a minute when it starts.")
+    }
+
+    /**
+     * Region-aware channel plan for every band the router uses, including the band the phone is not
+     * connected on (typically 2.4 GHz): flags channels that are not permitted where you are, much
+     * quieter alternatives, and needlessly wide 2.4 GHz channels.
+     */
+    object ChannelPlanRule : DiagnosisRule {
+        override fun evaluate(m: Measurements, config: DiagnoserConfig): Finding? {
+            val analysis = m.channels ?: return null
+            val region = analysis.region
+            val lines = mutableListOf<String>()
+            val fixes = mutableListOf<String>()
+            var notPermitted = false
+            for (b in analysis.bands) {
+                val current = b.current ?: continue
+                val best = b.recommended
+                if (b.currentAllowed == false) {
+                    notPermitted = true
+                    lines += "${b.band.label}: channel ${current.channel} is not permitted in ${region.countryName ?: region.countryCode} " +
+                        "(${region.domain.label}). Some devices will not be able to see the network."
+                    if (best != null) fixes += channelFix(b.band, best, region)
+                } else if (b.shouldChange && best != null) {
+                    lines += "${b.band.label}: your router uses channel ${current.channel}, shared with an interference score of " +
+                        "${"%.1f".format(current.score)} from ${b.neighbours} nearby networks; channel ${best.channel} scores " +
+                        "${"%.1f".format(best.score)}."
+                    fixes += channelFix(b.band, best, region)
+                }
+                if (b.band == Band.GHZ_2_4 && current.widthMhz >= 40 && b.neighbours >= 3) {
+                    lines += "2.4 GHz: your router uses a ${current.widthMhz} MHz channel, which overlaps most of the band and its neighbours."
+                    fixes += "In the router's settings, set the 2.4 GHz channel width to 20 MHz."
+                }
+            }
+            if (lines.isEmpty()) return null
+            return Finding(
+                ruleId = "channel_plan",
+                severity = Severity.WARN,
+                layer = Layer.CONGESTION,
+                title = if (notPermitted) "Router uses a channel not permitted here" else "Better Wi-Fi channel available",
+                explanation = lines.joinToString(" ") + " Channel rules: ${region.description}.",
+                fixes = fixes + "Or enable the router's automatic channel selection, then run the check again.",
             )
         }
     }

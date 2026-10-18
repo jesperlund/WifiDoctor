@@ -25,10 +25,16 @@ data class SettingsUiState(
     val settings: AppSettings = AppSettings(),
     val urlError: String? = null,
     val targetsError: String? = null,
+    val countryError: String? = null,
     val message: String? = null,
 )
 
-private data class Transient(val urlError: String? = null, val targetsError: String? = null, val message: String? = null)
+private data class Transient(
+    val urlError: String? = null,
+    val targetsError: String? = null,
+    val countryError: String? = null,
+    val message: String? = null,
+)
 
 @HiltViewModel
 class SettingsViewModel @Inject constructor(
@@ -41,7 +47,7 @@ class SettingsViewModel @Inject constructor(
     private val transient = MutableStateFlow(Transient())
 
     val uiState: StateFlow<SettingsUiState> = combine(settingsRepository.settings, transient) { s, t ->
-        SettingsUiState(s, t.urlError, t.targetsError, t.message)
+        SettingsUiState(s, t.urlError, t.targetsError, t.countryError, t.message)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), SettingsUiState())
 
     private fun edit(transform: (AppSettings) -> AppSettings) = viewModelScope.launch {
@@ -84,6 +90,18 @@ class SettingsViewModel @Inject constructor(
         }
         transient.update { it.copy(targetsError = null, message = "Probe targets saved") }
         edit { it.copy(probeTargets = targets) }
+        return true
+    }
+
+    /** Blank means "detect automatically". */
+    fun setCountryOverride(code: String): Boolean {
+        if (!SettingsValidation.isValidCountry(code)) {
+            transient.update { it.copy(countryError = "Enter a two-letter country code such as US, DE or GB, or leave empty") }
+            return false
+        }
+        val normalized = code.trim().uppercase()
+        transient.update { it.copy(countryError = null, message = if (normalized.isEmpty()) "Country set to automatic" else "Country set to $normalized") }
+        edit { it.copy(countryOverride = normalized) }
         return true
     }
 

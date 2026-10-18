@@ -1,7 +1,10 @@
 package com.example.wifidoctor.ui
 
 import com.example.wifidoctor.core.engine.StepState
+import com.example.wifidoctor.core.model.Band
 import com.example.wifidoctor.core.model.EnvironmentStatus
+import com.example.wifidoctor.core.model.ScanEntry
+import com.example.wifidoctor.core.wifi.RegionHints
 import com.example.wifidoctor.core.model.Layer
 import com.example.wifidoctor.core.model.Severity
 import com.example.wifidoctor.data.AppSettings
@@ -28,8 +31,13 @@ class DashboardViewModelTest {
     private val settings = FakeSettingsRepository()
     private val env = FakeEnvironmentMonitor()
 
+    private val hintsSeen = mutableListOf<String?>()
+
     private fun vm(factory: EngineFactory = fakeEngineFactory()) =
-        DashboardViewModel(factory, { healthyLink }, env, repo, settings)
+        DashboardViewModel(factory, { healthyLink }, env, repo, settings) { override ->
+            hintsSeen += override
+            RegionHints(override = override, networkCountry = "us")
+        }
 
     @Test
     fun `initial state shows all layers pending`() {
@@ -122,6 +130,42 @@ class DashboardViewModelTest {
         advanceUntilIdle()
         assertEquals(1, throughput.calls)
         assertEquals(1, repo.runs.value.size)
+    }
+
+    @Test
+    fun `channel advice covers both bands and uses the region`() = runTest {
+        val scan = listOf(
+            ScanEntry("HomeNet", "aa:bb:cc:dd:ee:00", 2462, -45, 20), // our router's 2.4 GHz radio on ch 11
+            ScanEntry("Neighbour1", "11:00:00:00:00:01", 2462, -50, 20),
+            ScanEntry("Neighbour2", "11:00:00:00:00:02", 2462, -50, 20),
+            ScanEntry("Neighbour3", "11:00:00:00:00:03", 2457, -55, 20),
+            ScanEntry("Far", "11:00:00:00:00:04", 5180, -80, 80, countryCode = "DE"),
+            ScanEntry("Far2", "11:00:00:00:00:05", 5180, -82, 80, countryCode = "DE"),
+        )
+        val vm = vm(fakeEngineFactory(scan = scan))
+        vm.runDiagnosis()
+        advanceUntilIdle()
+
+        val channels = vm.uiState.value.channels!!
+        assertEquals("DE", channels.region.countryCode) // access points outrank the mobile network hint
+        assertEquals(listOf(Band.GHZ_2_4, Band.GHZ_5), channels.bands.map { it.band })
+        val b24 = channels.band(Band.GHZ_2_4)!!
+        assertEquals(11, b24.current!!.channel)
+        assertEquals(1, b24.recommended!!.channel)
+        assertTrue(vm.uiState.value.diagnosis!!.findings.any { it.ruleId == "channel_plan" })
+        assertEquals(11, repo.runs.value.single().routerChannel24)
+        assertEquals(1, repo.runs.value.single().suggestedChannel24)
+        assertEquals("DE", repo.runs.value.single().countryCode)
+    }
+
+    @Test
+    fun `country override from settings is passed to the engine`() = runTest {
+        settings.state.value = AppSettings(countryOverride = "JP")
+        val vm = vm()
+        vm.runDiagnosis()
+        advanceUntilIdle()
+        assertEquals(listOf<String?>("JP"), hintsSeen)
+        assertEquals("JP", vm.uiState.value.channels!!.region.countryCode)
     }
 
     @Test

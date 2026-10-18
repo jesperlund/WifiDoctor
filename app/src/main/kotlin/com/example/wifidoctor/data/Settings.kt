@@ -9,6 +9,8 @@ import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.example.wifidoctor.core.engine.RunConfig
+import com.example.wifidoctor.core.wifi.RegionHints
+import com.example.wifidoctor.core.wifi.RegionResolver
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -26,10 +28,13 @@ data class AppSettings(
     val usePingFallback: Boolean = true,
     val speedTestOnMetered: Boolean = false,
     val speedTestInBackground: Boolean = false,
+    /** ISO country code for channel rules; blank = detect automatically. */
+    val countryOverride: String = "",
 ) {
     /** Builds the engine configuration for a run. Speed tests are skipped on metered Wi-Fi unless allowed. */
-    fun toRunConfig(metered: Boolean, background: Boolean = false): RunConfig = RunConfig(
+    fun toRunConfig(metered: Boolean, background: Boolean = false, regionHints: RegionHints = RegionHints()): RunConfig = RunConfig(
         internetTargets = probeTargets.ifEmpty { DEFAULT_TARGETS },
+        regionHints = regionHints,
         throughputUrl = testServerUrl,
         runThroughput = (!metered || speedTestOnMetered) && (!background || speedTestInBackground),
     )
@@ -66,6 +71,9 @@ object SettingsValidation {
         host.all { it.isLetterOrDigit() || it == ':' || it == '.' } &&
             runCatching { InetAddress.getByName(host) }.isSuccess // literal: no DNS lookup happens
 
+    /** Blank (automatic) or a two-letter ISO 3166 country code. */
+    fun isValidCountry(code: String): Boolean = code.isBlank() || RegionResolver.normalize(code) != null
+
     fun isValidUrl(url: String): Boolean = runCatching {
         val uri = URI(url.trim())
         (uri.scheme == "https" || uri.scheme == "http") && !uri.host.isNullOrBlank()
@@ -89,6 +97,7 @@ class DataStoreSettingsRepository @Inject constructor(
         val ping = booleanPreferencesKey("use_ping_fallback")
         val metered = booleanPreferencesKey("speed_test_on_metered")
         val background = booleanPreferencesKey("speed_test_in_background")
+        val country = stringPreferencesKey("country_override")
     }
 
     private fun Preferences.toSettings(): AppSettings {
@@ -102,6 +111,7 @@ class DataStoreSettingsRepository @Inject constructor(
             usePingFallback = this[Keys.ping] ?: d.usePingFallback,
             speedTestOnMetered = this[Keys.metered] ?: d.speedTestOnMetered,
             speedTestInBackground = this[Keys.background] ?: d.speedTestInBackground,
+            countryOverride = this[Keys.country] ?: d.countryOverride,
         )
     }
 
@@ -119,6 +129,7 @@ class DataStoreSettingsRepository @Inject constructor(
             p[Keys.ping] = next.usePingFallback
             p[Keys.metered] = next.speedTestOnMetered
             p[Keys.background] = next.speedTestInBackground
+            p[Keys.country] = next.countryOverride
         }
     }
 }

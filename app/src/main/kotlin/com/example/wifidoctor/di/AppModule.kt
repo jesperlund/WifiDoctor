@@ -23,6 +23,8 @@ import com.example.wifidoctor.data.SettingsRepository
 import com.example.wifidoctor.data.db.RunDao
 import com.example.wifidoctor.data.db.WifiDoctorDatabase
 import com.example.wifidoctor.platform.AndroidEnvironmentMonitor
+import com.example.wifidoctor.platform.AndroidRegionHintsProvider
+import com.example.wifidoctor.platform.RegionHintsProvider
 import com.example.wifidoctor.platform.AndroidLinkSource
 import com.example.wifidoctor.platform.AndroidScanSource
 import com.example.wifidoctor.platform.ContentResolverWriter
@@ -63,7 +65,9 @@ object AppModule {
     @Provides
     @Singleton
     fun database(@ApplicationContext context: Context): WifiDoctorDatabase =
-        Room.databaseBuilder(context, WifiDoctorDatabase::class.java, WifiDoctorDatabase.NAME).build()
+        Room.databaseBuilder(context, WifiDoctorDatabase::class.java, WifiDoctorDatabase.NAME)
+            .addMigrations(WifiDoctorDatabase.MIGRATION_1_2)
+            .build()
 
     @Provides
     fun runDao(db: WifiDoctorDatabase): RunDao = db.runDao()
@@ -102,4 +106,5 @@ abstract class BindingsModule {
     @Binds abstract fun settingsRepository(impl: DataStoreSettingsRepository): SettingsRepository
     @Binds abstract fun scheduler(impl: WorkManagerCheckScheduler): CheckScheduler
     @Binds abstract fun documentWriter(impl: ContentResolverWriter): DocumentWriter
+    @Binds abstract fun regionHints(impl: AndroidRegionHintsProvider): RegionHintsProvider
 }
