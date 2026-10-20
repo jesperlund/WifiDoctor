@@ -7,7 +7,7 @@ An Android app that diagnoses home Wi-Fi problems. It checks the connection one 
 - **History:** Canvas-drawn line charts of latency, packet loss and RSSI. Tap a point (or a row in the list) to see that run's diagnosis. Intermittent drops are marked with ▲ triangles.
 - **Settings:** scheduled background checks (WorkManager, interval choice, notify only on problems), speed-test URL, probe targets, ping fallback, metered-network behaviour, CSV export and clear history.
 
-Stack: Kotlin, Jetpack Compose (Material 3, dynamic colour, light/dark), a single activity, MVVM with `StateFlow`, Hilt, Room, WorkManager, DataStore and Coroutines/Flow. minSdk 26, targetSdk/compileSdk 36 (Android 16, as Google Play requires for new apps), package `com.example.wifidoctor`.
+Stack: Kotlin, Jetpack Compose (Material 3, dynamic colour, light/dark), a single activity, MVVM with `StateFlow`, Hilt, Room, WorkManager, DataStore and Coroutines/Flow. minSdk 26, targetSdk/compileSdk 36 (Android 16, as Google Play requires for new apps), application id `io.github.jesperlund.wifidoctor` (Kotlin package `com.example.wifidoctor`).
 
 ## Architecture
 
@@ -136,7 +136,7 @@ CI (`.github/workflows/android.yml`) runs the unit tests, `assembleDebug` and th
 ## Publishing to Google Play
 
 ### 1. One-time project changes
-- **Application id:** Play rejects `com.example.*`. In `app/build.gradle.kts`, change `applicationId` to an id you own, e.g. `com.yourdomain.wifidoctor` or `io.github.<username>.wifidoctor`. **It can never change after the first upload.** The Kotlin package (`namespace`) can stay as it is.
+- **Application id:** `io.github.jesperlund.wifidoctor` (in `app/build.gradle.kts`). **It can never change after the first upload.** The Kotlin package (`namespace`, `com.example.wifidoctor`) is separate and doesn't matter to Play.
 - **Version:** `versionName` lives in `app/build.gradle.kts`. `versionCode` is taken from the CI run number (or `VERSION_CODE`) so every upload is higher.
 
 ### 2. Create an upload key (on your own computer, once)
@@ -179,7 +179,7 @@ Every push then produces a **wifidoctor-release** artifact containing the signed
 After the first manual upload (Play only accepts API uploads for an app that already exists):
 1. In Google Cloud, create a service account and enable the Google Play Android Developer API. Download a JSON key.
 2. In Play Console → *Users and permissions*, invite the service account's email with release permissions for this app.
-3. Add the secret `PLAY_SERVICE_ACCOUNT_JSON` (the JSON content) and the repository **variable** `PLAY_PACKAGE_NAME` (your application id).
+3. Add the secret `PLAY_SERVICE_ACCOUNT_JSON` (the JSON content).
 4. In GitHub → Actions → **Android CI** → **Run workflow**, tick *publish* and pick the track (`internal`, `alpha` = closed testing, `beta` = open testing, `production`). Use status `draft` until the app has passed its first review.
 
 ## Decisions made

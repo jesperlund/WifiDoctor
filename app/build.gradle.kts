@@ -25,9 +25,8 @@ android {
     compileSdk = 36
 
     defaultConfig {
-        // Google Play rejects com.example.*: change this to your own unique id before the first upload.
-        // It can never change once the app is published.
-        applicationId = "com.example.wifidoctor"
+        // The Play Store identity: it can never change once the app is published.
+        applicationId = "io.github.jesperlund.wifidoctor"
         minSdk = 26
         targetSdk = 36
         // CI passes the run number so every upload gets a higher versionCode, as Play requires.
