@@ -1,0 +1,58 @@
+name: Android CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Unit tests (core + app)
+        run: ./gradlew :core:test testDebugUnitTest --stacktrace
+
+      - name: Test summary
+        if: always()
+        run: |
+          python3 - <<'PY'
+          import glob, xml.etree.ElementTree as ET
+          for module in ("core", "app"):
+              t = f = e = s = 0
+              for path in glob.glob(f"{module}/build/test-results/**/*.xml", recursive=True):
+                  r = ET.parse(path).getroot()
+                  t += int(r.get("tests")); f += int(r.get("failures")); e += int(r.get("errors")); s += int(r.get("skipped"))
+              line = f"{module}: {t} tests, {f} failures, {e} errors, {s} skipped"
+              print(line)
+              with open(__import__("os").environ["GITHUB_STEP_SUMMARY"], "a") as out:
+                  out.write(line + "\n\n")
+          PY
+
+      - name: Build debug APK
+        run: ./gradlew assembleDebug --stacktrace
+
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports
+          path: |
+            core/build/reports/tests/
+            app/build/reports/tests/
+
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: wifidoctor-debug-apk
+          path: app/build/outputs/apk/debug/app-debug.apk
