@@ -7,13 +7,13 @@ An Android app that diagnoses home Wi-Fi problems. It checks the connection one 
 - **History:** Canvas-drawn line charts of latency, packet loss and RSSI. Tap a point (or a row in the list) to see that run's diagnosis. Intermittent drops are marked with ▲ triangles.
 - **Settings:** scheduled background checks (WorkManager, interval choice, notify only on problems), speed-test URL, probe targets, ping fallback, metered-network behaviour, CSV export and clear history.
 
-Stack: Kotlin, Jetpack Compose (Material 3, dynamic colour, light/dark), a single activity, MVVM with `StateFlow`, Hilt, Room, WorkManager, DataStore and Coroutines/Flow. minSdk 26, targetSdk/compileSdk 36 (Android 16, as Google Play requires for new apps), application id `io.github.jesperlund.wifidoctor` (Kotlin package `com.example.wifidoctor`).
+Stack: Kotlin, Jetpack Compose (Material 3, dynamic colour, light/dark), a single activity, MVVM with `StateFlow`, Hilt, Room, WorkManager, DataStore and Coroutines/Flow. minSdk 26, targetSdk/compileSdk 36 (Android 16, as Google Play requires for new apps), application id and Kotlin package `io.github.jesperlund.wifidoctor`.
 
 ## Architecture
 
 ```
 :core  (pure Kotlin/JVM library: no Android dependencies, so the engine and rules are fully unit-testable)
-  com.example.wifidoctor.core
+  io.github.jesperlund.wifidoctor.core
     model/       Measurements, LinkInfo, ProbeStats, DnsResult, ScanSnapshot, Diagnosis, Severity, Layer,
                  EnvironmentStatus (Wi-Fi off / not connected / location off / metered / cellular)
     wifi/        WifiMath (band, channel, channel overlap incl. bonded 5/6 GHz blocks, congestion,
@@ -26,7 +26,7 @@ Stack: Kotlin, Jetpack Compose (Material 3, dynamic colour, light/dark), a singl
     history/     RunRecord (flattened run), DropDetector, RoomRanking, CsvExporter
 
 :app   (Android application)
-  com.example.wifidoctor
+  io.github.jesperlund.wifidoctor
     platform/    WifiNetworkTracker (NetworkCallback), AndroidLinkSource (WifiInfo/LinkProperties),
                  AndroidScanSource (startScan + throttling fallback), WifiNetworkBinding, EnvironmentMonitor,
                  PermissionChecker, WifiMappers (raw Android values → domain), DocumentWriter (SAF)
@@ -136,7 +136,7 @@ CI (`.github/workflows/android.yml`) runs the unit tests, `assembleDebug` and th
 ## Publishing to Google Play
 
 ### 1. One-time project changes
-- **Application id:** `io.github.jesperlund.wifidoctor` (in `app/build.gradle.kts`). **It can never change after the first upload.** The Kotlin package (`namespace`, `com.example.wifidoctor`) is separate and doesn't matter to Play.
+- **Application id:** `io.github.jesperlund.wifidoctor` (in `app/build.gradle.kts`). **It can never change after the first upload.**
 - **Version:** `versionName` lives in `app/build.gradle.kts`. `versionCode` is taken from the CI run number (or `VERSION_CODE`) so every upload is higher.
 
 ### 2. Create an upload key (on your own computer, once)

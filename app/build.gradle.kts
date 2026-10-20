@@ -21,7 +21,7 @@ fun signingValue(env: String, prop: String): String? =
 val releaseStoreFile = signingValue("WIFIDOCTOR_KEYSTORE_FILE", "storeFile")
 
 android {
-    namespace = "com.example.wifidoctor"
+    namespace = "io.github.jesperlund.wifidoctor"
     compileSdk = 36
 
     defaultConfig {
