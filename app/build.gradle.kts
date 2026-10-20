@@ -1,4 +1,5 @@
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import java.util.Properties
 
 plugins {
     alias(libs.plugins.android.application)
@@ -8,22 +9,49 @@ plugins {
     alias(libs.plugins.hilt)
 }
 
+// Release signing comes from environment variables (CI) or an untracked keystore.properties file
+// (local builds). Without either, release builds are produced unsigned. Never commit the keystore.
+val keystoreProps = Properties().apply {
+    val file = rootProject.file("keystore.properties")
+    if (file.exists()) file.inputStream().use { load(it) }
+}
+fun signingValue(env: String, prop: String): String? =
+    System.getenv(env)?.takeIf { it.isNotBlank() } ?: keystoreProps.getProperty(prop)?.takeIf { it.isNotBlank() }
+
+val releaseStoreFile = signingValue("WIFIDOCTOR_KEYSTORE_FILE", "storeFile")
+
 android {
     namespace = "com.example.wifidoctor"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
+        // Google Play rejects com.example.*: change this to your own unique id before the first upload.
+        // It can never change once the app is published.
         applicationId = "com.example.wifidoctor"
         minSdk = 26
-        targetSdk = 35
-        versionCode = 1
+        targetSdk = 36
+        // CI passes the run number so every upload gets a higher versionCode, as Play requires.
+        versionCode = System.getenv("VERSION_CODE")?.toIntOrNull() ?: 1
         versionName = "1.0"
+    }
+
+    signingConfigs {
+        if (releaseStoreFile != null) {
+            create("release") {
+                storeFile = rootProject.file(releaseStoreFile)
+                storePassword = signingValue("WIFIDOCTOR_KEYSTORE_PASSWORD", "storePassword")
+                keyAlias = signingValue("WIFIDOCTOR_KEY_ALIAS", "keyAlias")
+                keyPassword = signingValue("WIFIDOCTOR_KEY_PASSWORD", "keyPassword")
+            }
+        }
     }
 
     buildTypes {
         release {
             isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            signingConfigs.findByName("release")?.let { signingConfig = it }
         }
     }
 

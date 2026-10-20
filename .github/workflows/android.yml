@@ -5,11 +5,32 @@ on:
     branches: ['**']
   pull_request:
   workflow_dispatch:
+    inputs:
+      publish:
+        description: 'Upload the signed bundle to Google Play'
+        type: boolean
+        default: false
+      track:
+        description: 'Play track (internal, alpha = closed testing, beta = open testing, production)'
+        type: choice
+        options: [internal, alpha, beta, production]
+        default: internal
+      status:
+        description: 'Release status. Use draft until the app has been reviewed once, then completed.'
+        type: choice
+        options: [draft, completed]
+        default: draft
 
 jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    env:
+      # Play needs a higher versionCode for every upload.
+      VERSION_CODE: ${{ github.run_number }}
+      # Empty until the signing / Play secrets are added (see README.md, "Publishing to Google Play").
+      HAS_KEYSTORE: ${{ secrets.WIFIDOCTOR_KEYSTORE_BASE64 != '' }}
+      HAS_PLAY_ACCOUNT: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON != '' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -56,3 +77,42 @@ jobs:
         with:
           name: wifidoctor-debug-apk
           path: app/build/outputs/apk/debug/app-debug.apk
+
+      # ---- Release -------------------------------------------------------------------------
+
+      - name: Restore upload keystore
+        if: env.HAS_KEYSTORE == 'true'
+        env:
+          KEYSTORE_B64: ${{ secrets.WIFIDOCTOR_KEYSTORE_BASE64 }}
+        run: |
+          echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/upload.jks"
+          echo "WIFIDOCTOR_KEYSTORE_FILE=$RUNNER_TEMP/upload.jks" >> "$GITHUB_ENV"
+
+      # Always built so R8/minification problems show up on every push; signed only with the secrets.
+      - name: Build release bundle (AAB) and APK
+        env:
+          WIFIDOCTOR_KEYSTORE_PASSWORD: ${{ secrets.WIFIDOCTOR_KEYSTORE_PASSWORD }}
+          WIFIDOCTOR_KEY_ALIAS: ${{ secrets.WIFIDOCTOR_KEY_ALIAS }}
+          WIFIDOCTOR_KEY_PASSWORD: ${{ secrets.WIFIDOCTOR_KEY_PASSWORD }}
+        run: ./gradlew bundleRelease assembleRelease --stacktrace
+
+      - name: Upload signed release
+        if: env.HAS_KEYSTORE == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: wifidoctor-release
+          path: |
+            app/build/outputs/bundle/release/app-release.aab
+            app/build/outputs/apk/release/app-release.apk
+            app/build/outputs/mapping/release/mapping.txt
+
+      - name: Publish to Google Play
+        if: github.event_name == 'workflow_dispatch' && inputs.publish && env.HAS_KEYSTORE == 'true' && env.HAS_PLAY_ACCOUNT == 'true'
+        uses: r0adkll/upload-google-play@v1
+        with:
+          serviceAccountJsonPlainText: ${{ secrets.PLAY_SERVICE_ACCOUNT_JSON }}
+          packageName: ${{ vars.PLAY_PACKAGE_NAME }}
+          releaseFiles: app/build/outputs/bundle/release/app-release.aab
+          mappingFile: app/build/outputs/mapping/release/mapping.txt
+          track: ${{ inputs.track }}
+          status: ${{ inputs.status }}

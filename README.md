@@ -7,7 +7,7 @@ An Android app that diagnoses home Wi-Fi problems. It checks the connection one 
 - **History:** Canvas-drawn line charts of latency, packet loss and RSSI. Tap a point (or a row in the list) to see that run's diagnosis. Intermittent drops are marked with ▲ triangles.
 - **Settings:** scheduled background checks (WorkManager, interval choice, notify only on problems), speed-test URL, probe targets, ping fallback, metered-network behaviour, CSV export and clear history.
 
-Stack: Kotlin, Jetpack Compose (Material 3, dynamic colour, light/dark), a single activity, MVVM with `StateFlow`, Hilt, Room, WorkManager, DataStore and Coroutines/Flow. minSdk 26, targetSdk/compileSdk 35, package `com.example.wifidoctor`.
+Stack: Kotlin, Jetpack Compose (Material 3, dynamic colour, light/dark), a single activity, MVVM with `StateFlow`, Hilt, Room, WorkManager, DataStore and Coroutines/Flow. minSdk 26, targetSdk/compileSdk 36 (Android 16, as Google Play requires for new apps), package `com.example.wifidoctor`.
 
 ## Architecture
 
@@ -122,7 +122,7 @@ Privacy: no analytics, no ads, no crash reporting, no accounts. The only traffic
 
 ## Build and install
 
-Requirements: JDK 17+ and the Android SDK (platform 35) with `ANDROID_HOME` set or `sdk.dir` in `local.properties`.
+Requirements: JDK 17+ and the Android SDK (platform 36) with `ANDROID_HOME` set or `sdk.dir` in `local.properties`.
 
 ```bash
 ./gradlew assembleDebug          # builds app/build/outputs/apk/debug/app-debug.apk
@@ -131,7 +131,56 @@ Requirements: JDK 17+ and the Android SDK (platform 35) with `ANDROID_HOME` set 
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
-CI (`.github/workflows/android.yml`) runs the unit tests and `assembleDebug` on every push and uploads the debug APK and test reports as artifacts.
+CI (`.github/workflows/android.yml`) runs the unit tests, `assembleDebug` and the minified release build on every push. It uploads the debug APK and test reports as artifacts, plus the signed release once the signing secrets exist.
+
+## Publishing to Google Play
+
+### 1. One-time project changes
+- **Application id:** Play rejects `com.example.*`. In `app/build.gradle.kts`, change `applicationId` to an id you own, e.g. `com.yourdomain.wifidoctor` or `io.github.<username>.wifidoctor`. **It can never change after the first upload.** The Kotlin package (`namespace`) can stay as it is.
+- **Version:** `versionName` lives in `app/build.gradle.kts`. `versionCode` is taken from the CI run number (or `VERSION_CODE`) so every upload is higher.
+
+### 2. Create an upload key (on your own computer, once)
+```bash
+keytool -genkeypair -v -keystore wifidoctor-upload.jks -alias upload \
+  -keyalg RSA -keysize 4096 -validity 10000
+```
+Back up the `.jks` file and its passwords somewhere safe, such as a password manager. Never commit it: `*.jks` and `keystore.properties` are git-ignored. With **Play App Signing** (the default for new apps), Google holds the real app signing key and this is only your *upload* key. If you lose it, Play support can reset it.
+
+**Local signed build:** copy `keystore.properties.example` to `keystore.properties`, fill it in, then run:
+```bash
+./gradlew bundleRelease     # app/build/outputs/bundle/release/app-release.aab  (upload this to Play)
+./gradlew assembleRelease   # app/build/outputs/apk/release/app-release.apk     (for sideloading)
+```
+
+**CI signed build:** in GitHub → Settings → Secrets and variables → Actions, add:
+
+| Secret | Value |
+|--------|-------|
+| `WIFIDOCTOR_KEYSTORE_BASE64` | `base64 -w0 wifidoctor-upload.jks` (macOS: `base64 -i wifidoctor-upload.jks`) |
+| `WIFIDOCTOR_KEYSTORE_PASSWORD` | keystore password |
+| `WIFIDOCTOR_KEY_ALIAS` | `upload` |
+| `WIFIDOCTOR_KEY_PASSWORD` | key password |
+
+Every push then produces a **wifidoctor-release** artifact containing the signed `.aab`, the `.apk` and the R8 `mapping.txt`.
+
+### 3. Play Console (manual, first release)
+1. Create a developer account at https://play.google.com/console (one-off US$25 fee, plus identity verification).
+2. **Create app**: choose the name, default language, App, Free.
+3. **App content** (Policy section):
+   - **Privacy policy URL**: required because the app uses location permissions. Host `PRIVACY.md` publicly (e.g. GitHub Pages, or the file's URL in a public repo) and update its contact line.
+   - **Data safety**: no data collected or shared. All data is processed and stored on the device; location-type data (Wi-Fi names/BSSIDs) is used only on the device.
+   - **Ads**: none. **Target audience**: 18+ (or 13+). **Content rating** questionnaire: utility app, no sensitive content.
+   - No background location is requested, so no location declaration form is needed.
+4. **Store listing**: short and full description, 512×512 icon, 1024×500 feature graphic, and at least 2 phone screenshots.
+5. **Testing**: new *personal* developer accounts must run a **closed test with at least 12 testers for 14 consecutive days** before production access is granted. Upload the first `.aab` to *Testing → Closed testing* (or *Internal testing* for a quick check), add testers, and roll out.
+6. After the test period, apply for production access and promote the release to *Production*.
+
+### 4. Optional: upload from CI
+After the first manual upload (Play only accepts API uploads for an app that already exists):
+1. In Google Cloud, create a service account and enable the Google Play Android Developer API. Download a JSON key.
+2. In Play Console → *Users and permissions*, invite the service account's email with release permissions for this app.
+3. Add the secret `PLAY_SERVICE_ACCOUNT_JSON` (the JSON content) and the repository **variable** `PLAY_PACKAGE_NAME` (your application id).
+4. In GitHub → Actions → **Android CI** → **Run workflow**, tick *publish* and pick the track (`internal`, `alpha` = closed testing, `beta` = open testing, `production`). Use status `draft` until the app has passed its first review.
 
 ## Decisions made
 
@@ -150,6 +199,8 @@ CI (`.github/workflows/android.yml`) runs the unit tests and `assembleDebug` on 
 - **Build environment:** the cloud sandbox this was written in could not reach Google's Maven repository (`dl.google.com` / `maven.google.com`). `:core` was built and tested locally against Maven Central; the full Android build and app tests were verified on GitHub Actions.
 
 ## Next steps
+
+- Add a Play Store listing kit (screenshots via Compose previews or screenshot tests, feature graphic).
 
 - Show a live mini-chart of signal strength during a walk test, and let the user draw a floor plan to turn walk tests into a heat map.
 - Add an upload test, and latency under load (bufferbloat) by probing during the download.
