@@ -6,6 +6,11 @@ import io.github.jesperlund.wifidoctor.core.model.Layer
 import io.github.jesperlund.wifidoctor.core.model.LoadedLatency
 import io.github.jesperlund.wifidoctor.core.model.NatBehavior
 import io.github.jesperlund.wifidoctor.core.model.ProbeStats
+import io.github.jesperlund.wifidoctor.core.model.ServiceCheck
+import io.github.jesperlund.wifidoctor.core.model.ServiceEndpoint
+import io.github.jesperlund.wifidoctor.core.model.ServiceTarget
+import io.github.jesperlund.wifidoctor.core.model.Services
+import io.github.jesperlund.wifidoctor.core.probe.ServiceTester
 import io.github.jesperlund.wifidoctor.core.model.RealtimeResult
 import io.github.jesperlund.wifidoctor.core.model.StunServer
 import io.github.jesperlund.wifidoctor.core.model.ThroughputResult
@@ -66,6 +71,10 @@ data class RunConfig(
     val stunSamples: Int = 15,
     val stunIntervalMs: Long = 50,
     val stunTimeoutMs: Int = 500,
+    val runServices: Boolean = true,
+    val services: List<ServiceTarget> = Services.DEFAULTS,
+    val serviceBaseline: ServiceEndpoint = Services.BASELINE,
+    val serviceTimeoutMs: Int = 4_000,
     val runScan: Boolean = true,
     /** Country hints for channel regulations; access-point country elements are added from the scan. */
     val regionHints: RegionHints = RegionHints(),
@@ -94,7 +103,7 @@ sealed interface EngineEvent {
 
 /**
  * Runs the layered checks in order (link → gateway → internet → DNS → speed → under load → UDP →
- * congestion),
+ * apps → congestion),
  * emitting progress as it goes. Cancelling the collector cancels any probe in flight.
  */
 class DiagnosticEngine(
@@ -109,6 +118,8 @@ class DiagnosticEngine(
     private val realtimeTester: RealtimeTester? = null,
     /** Single-sample prober used while the line is loaded. */
     private val rttProbe: RttProbe = RttProbe { host, timeout -> prober.probe(host, 1, timeout).avgMs },
+    /** Checks app-specific servers; null skips that layer. */
+    private val serviceTester: ServiceTester? = null,
 ) {
 
     fun run(config: RunConfig = RunConfig()): Flow<EngineEvent> = channelFlow {
@@ -199,6 +210,17 @@ class DiagnosticEngine(
             finish(Layer.REALTIME, realtimeSummary(r))
         }
 
+        // 8. App-specific servers
+        send(EngineEvent.StepStarted(Layer.SERVICES))
+        val services = serviceTester
+        if (services == null || !config.runServices || config.services.isEmpty()) {
+            skip(Layer.SERVICES, "App checks turned off")
+        } else {
+            val check = services.check(config.services, config.serviceBaseline, config.serviceTimeoutMs)
+            m = m.copy(services = check)
+            finish(Layer.SERVICES, servicesSummary(check))
+        }
+
         // 6. Congestion
         send(EngineEvent.StepStarted(Layer.CONGESTION))
         val scan = if (config.runScan) scanSource.scan() else null
@@ -270,6 +292,14 @@ class DiagnosticEngine(
             return "${s.avgMs?.toInt()} ms, ${"%.0f".format(s.lossPercent)}% loss, ${s.jitterMs?.toInt() ?: 0} ms jitter" +
                 (if (r.nat == NatBehavior.SYMMETRIC) " · symmetric NAT" else "")
         }
+
+        fun servicesSummary(c: ServiceCheck): String = c.results.joinToString(" · ") { r ->
+            when {
+                r.allFailed -> "${r.target.name}: ${r.endpoints.first().failure?.label?.lowercase()}"
+                r.failed.isNotEmpty() -> "${r.target.name}: ${r.failed.size} of ${r.endpoints.size} servers failing"
+                else -> "${r.target.name} ${r.medianTotalMs?.toInt()} ms"
+            }
+        } + (c.baseline?.totalMs?.let { " (reference ${it.toInt()} ms)" } ?: "")
 
         fun congestionSummary(m: Measurements, throttled: Boolean): String {
             val c = m.congestion

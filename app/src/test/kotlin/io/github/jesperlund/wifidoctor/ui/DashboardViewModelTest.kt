@@ -62,6 +62,8 @@ class DashboardViewModelTest {
         assertEquals(1, repo.runs.value.size)
         assertEquals(s.savedRunId, repo.runs.value.single().id)
         assertEquals(-50, repo.runs.value.single().rssiDbm)
+        assertEquals(listOf("instagram", "teams"), s.services!!.results.map { it.target.id })
+        assertTrue(repo.runs.value.single().serviceSummary!!.startsWith("Instagram:OK"))
         assertNull(s.throughput)
     }
 

@@ -41,6 +41,7 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
 import javax.inject.Qualifier
 import javax.inject.Singleton
+import io.github.jesperlund.wifidoctor.core.probe.HttpsServiceTester
 import io.github.jesperlund.wifidoctor.core.probe.RttProbe
 import io.github.jesperlund.wifidoctor.core.probe.StunRealtimeTester
 import io.github.jesperlund.wifidoctor.monitor.CallMonitorController
@@ -85,7 +86,7 @@ object AppModule {
     @Singleton
     fun database(@ApplicationContext context: Context): WifiDoctorDatabase =
         Room.databaseBuilder(context, WifiDoctorDatabase::class.java, WifiDoctorDatabase.NAME)
-            .addMigrations(WifiDoctorDatabase.MIGRATION_1_2, WifiDoctorDatabase.MIGRATION_2_3)
+            .addMigrations(WifiDoctorDatabase.MIGRATION_1_2, WifiDoctorDatabase.MIGRATION_2_3, WifiDoctorDatabase.MIGRATION_3_4)
             .build()
 
     @Provides
@@ -107,6 +108,7 @@ object AppModule {
             throughputTester = HttpThroughputTester(binding),
             realtimeTester = StunRealtimeTester(binding),
             rttProbe = tcp,
+            serviceTester = HttpsServiceTester(binding),
         )
     }
 

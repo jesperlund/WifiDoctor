@@ -33,6 +33,8 @@ data class AppSettings(
     val uploadUrl: String = RunConfig.DEFAULT_UPLOAD_URL,
     /** UDP/STUN test of the path calls use. */
     val udpTestEnabled: Boolean = true,
+    /** Reachability/timing checks of Instagram's and Teams' servers. */
+    val servicesTestEnabled: Boolean = true,
 ) {
     /** Builds the engine configuration for a run. Speed tests are skipped on metered Wi-Fi unless allowed. */
     fun toRunConfig(metered: Boolean, background: Boolean = false, regionHints: RegionHints = RegionHints()): RunConfig = RunConfig(
@@ -41,6 +43,7 @@ data class AppSettings(
         throughputUrl = testServerUrl,
         uploadUrl = uploadUrl,
         runRealtime = udpTestEnabled,
+        runServices = servicesTestEnabled,
         runThroughput = (!metered || speedTestOnMetered) && (!background || speedTestInBackground),
     )
 
@@ -105,6 +108,7 @@ class DataStoreSettingsRepository @Inject constructor(
         val country = stringPreferencesKey("country_override")
         val uploadUrl = stringPreferencesKey("upload_url")
         val udp = booleanPreferencesKey("udp_test_enabled")
+        val services = booleanPreferencesKey("services_test_enabled")
     }
 
     private fun Preferences.toSettings(): AppSettings {
@@ -121,6 +125,7 @@ class DataStoreSettingsRepository @Inject constructor(
             countryOverride = this[Keys.country] ?: d.countryOverride,
             uploadUrl = this[Keys.uploadUrl] ?: d.uploadUrl,
             udpTestEnabled = this[Keys.udp] ?: d.udpTestEnabled,
+            servicesTestEnabled = this[Keys.services] ?: d.servicesTestEnabled,
         )
     }
 
@@ -141,6 +146,7 @@ class DataStoreSettingsRepository @Inject constructor(
             p[Keys.country] = next.countryOverride
             p[Keys.uploadUrl] = next.uploadUrl
             p[Keys.udp] = next.udpTestEnabled
+            p[Keys.services] = next.servicesTestEnabled
         }
     }
 }

@@ -143,6 +143,7 @@ fun SettingsScreen(snackbar: SnackbarHostState, viewModel: SettingsViewModel = h
                     Text("Save upload URL")
                 }
                 SwitchRow("Test the UDP path used by calls (STUN)", s.udpTestEnabled, viewModel::setUdpTestEnabled)
+                SwitchRow("Test Instagram and Teams servers", s.servicesTestEnabled, viewModel::setServicesTestEnabled)
 
                 var targets by rememberSaveable(s.probeTargets) { mutableStateOf(s.probeTargets.joinToString(", ")) }
                 OutlinedTextField(

@@ -229,7 +229,9 @@ class SettingsViewModelTest {
         assertFalse(vm.setUploadUrl("not a url"))
         assertTrue(vm.setUploadUrl("https://up.example.com/x"))
         vm.setUdpTestEnabled(false)
+        vm.setServicesTestEnabled(false)
         advanceUntilIdle()
+        assertFalse(settings.state.value.servicesTestEnabled)
         assertEquals("https://up.example.com/x", settings.state.value.uploadUrl)
         assertFalse(settings.state.value.udpTestEnabled)
     }

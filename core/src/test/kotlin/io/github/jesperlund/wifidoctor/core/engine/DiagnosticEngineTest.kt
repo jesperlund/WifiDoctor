@@ -2,7 +2,15 @@ package io.github.jesperlund.wifidoctor.core.engine
 
 import io.github.jesperlund.wifidoctor.core.Fixtures
 import io.github.jesperlund.wifidoctor.core.Fixtures.scanEntry
+import io.github.jesperlund.wifidoctor.core.history.RunRecord
+import io.github.jesperlund.wifidoctor.core.model.EndpointFailure
+import io.github.jesperlund.wifidoctor.core.model.EndpointResult
 import io.github.jesperlund.wifidoctor.core.model.Layer
+import io.github.jesperlund.wifidoctor.core.model.ServiceCheck
+import io.github.jesperlund.wifidoctor.core.model.ServiceEndpoint
+import io.github.jesperlund.wifidoctor.core.model.ServiceResult
+import io.github.jesperlund.wifidoctor.core.model.ServiceTarget
+import io.github.jesperlund.wifidoctor.core.probe.ServiceTester
 import io.github.jesperlund.wifidoctor.core.model.NatBehavior
 import io.github.jesperlund.wifidoctor.core.model.ProbeMethod
 import io.github.jesperlund.wifidoctor.core.model.RealtimeResult
@@ -68,6 +76,20 @@ class FakeThroughput(
     }
 }
 
+/** Answers every endpoint in [ms], except hosts in [blocked] which a DNS filter "blocks". */
+class FakeServices(private val ms: Double = 20.0, private val blocked: Set<String> = emptySet()) : ServiceTester {
+    var calls = 0
+    override suspend fun check(targets: List<ServiceTarget>, baseline: ServiceEndpoint, timeoutMs: Int): ServiceCheck {
+        calls++
+        fun result(e: ServiceEndpoint) = if (e.host in blocked) {
+            EndpointResult(e, listOf("0.0.0.0"), 1.0, failure = EndpointFailure.DNS_BLOCKED)
+        } else {
+            EndpointResult(e, listOf("203.0.113.1"), 1.0, ms, ms, ms, 200)
+        }
+        return ServiceCheck(targets.map { t -> ServiceResult(t, t.endpoints.map(::result)) }, result(baseline))
+    }
+}
+
 class FakeRealtime(private val result: RealtimeResult) : RealtimeTester {
     var calls = 0
     override suspend fun test(servers: List<StunServer>, samples: Int, intervalMs: Long, timeoutMs: Int): RealtimeResult {
@@ -98,10 +120,14 @@ class DiagnosticEngineTest {
         ),
         realtime: RealtimeTester? = FakeRealtime.good(),
         rttProbe: RttProbe? = null,
+        services: ServiceTester? = FakeServices(),
     ) = if (rttProbe == null) {
-        DiagnosticEngine({ link }, { scan }, prober, dns, throughput, clock = { 42L }, realtimeTester = realtime)
+        DiagnosticEngine({ link }, { scan }, prober, dns, throughput, clock = { 42L }, realtimeTester = realtime, serviceTester = services)
     } else {
-        DiagnosticEngine({ link }, { scan }, prober, dns, throughput, clock = { 42L }, realtimeTester = realtime, rttProbe = rttProbe)
+        DiagnosticEngine(
+            { link }, { scan }, prober, dns, throughput, clock = { 42L },
+            realtimeTester = realtime, rttProbe = rttProbe, serviceTester = services,
+        )
     }
 
     @Test
@@ -167,6 +193,33 @@ class DiagnosticEngineTest {
         assertEquals(StepState.SKIPPED, off.filterIsInstance<EngineEvent.StepFinished>().first { it.layer == Layer.REALTIME }.state)
         val none = engine(realtime = null).run().toList()
         assertEquals(StepState.SKIPPED, none.filterIsInstance<EngineEvent.StepFinished>().first { it.layer == Layer.REALTIME }.state)
+    }
+
+    @Test
+    fun `app servers are checked and summarised`() = runTest {
+        val events = engine(services = FakeServices(ms = 30.0)).run().toList()
+        val step = events.filterIsInstance<EngineEvent.StepFinished>().first { it.layer == Layer.SERVICES }
+        assertEquals(StepState.OK, step.state)
+        assertEquals("Instagram 91 ms · Microsoft Teams 91 ms (reference 91 ms)", step.summary)
+        val done = events.last() as EngineEvent.Finished
+        assertEquals("Instagram:OK:91ms;Microsoft Teams:OK:91ms", RunRecord.from(done.measurements, done.diagnosis).serviceSummary)
+    }
+
+    @Test
+    fun `blocked app servers fail the apps step`() = runTest {
+        val events = engine(services = FakeServices(blocked = setOf("scontent.cdninstagram.com"))).run().toList()
+        val step = events.filterIsInstance<EngineEvent.StepFinished>().first { it.layer == Layer.SERVICES }
+        assertEquals(StepState.FAIL, step.state)
+        assertEquals("Instagram: 1 of 4 servers failing", step.summary.substringBefore(" ·"))
+        assertEquals("service_dns_blocked", (events.last() as EngineEvent.Finished).diagnosis.findings.first().ruleId)
+    }
+
+    @Test
+    fun `apps step can be turned off`() = runTest {
+        val s = FakeServices()
+        val events = engine(services = s).run(RunConfig(runServices = false)).toList()
+        assertEquals(0, s.calls)
+        assertEquals(StepState.SKIPPED, events.filterIsInstance<EngineEvent.StepFinished>().first { it.layer == Layer.SERVICES }.state)
     }
 
     @Test

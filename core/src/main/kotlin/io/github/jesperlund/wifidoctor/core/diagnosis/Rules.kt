@@ -35,7 +35,7 @@ object Rules {
             CallPortBlockedRule,
             UdpQualityRule,
             SymmetricNatRule,
-        )
+        ) + ServiceRules.all
     }
 
     // --- helpers -----------------------------------------------------------------------------

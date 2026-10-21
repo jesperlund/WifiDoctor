@@ -104,6 +104,7 @@ class SettingsViewModel @Inject constructor(
     }
 
     fun setUdpTestEnabled(value: Boolean) = edit { it.copy(udpTestEnabled = value) }
+    fun setServicesTestEnabled(value: Boolean) = edit { it.copy(servicesTestEnabled = value) }
 
     /** Blank means "detect automatically". */
     fun setCountryOverride(code: String): Boolean {

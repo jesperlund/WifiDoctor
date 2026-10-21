@@ -33,7 +33,7 @@ interface RunDao {
     suspend fun clear()
 }
 
-@Database(entities = [RunEntity::class], version = 3, exportSchema = false)
+@Database(entities = [RunEntity::class], version = 4, exportSchema = false)
 abstract class WifiDoctorDatabase : RoomDatabase() {
     abstract fun runDao(): RunDao
 
@@ -66,6 +66,13 @@ abstract class WifiDoctorDatabase : RoomDatabase() {
                     "dropouts INTEGER",
                     "monitorDurationMs INTEGER",
                 ).forEach { db.execSQL("ALTER TABLE runs ADD COLUMN $it") }
+            }
+        }
+
+        /** v4: Instagram/Teams server checks. */
+        val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE runs ADD COLUMN serviceSummary TEXT")
             }
         }
     }

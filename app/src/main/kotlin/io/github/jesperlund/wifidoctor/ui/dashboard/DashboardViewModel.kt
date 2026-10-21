@@ -40,6 +40,7 @@ data class DashboardUiState(
     val throughput: ThroughputProgress? = null,
     val diagnosis: Diagnosis? = null,
     val channels: ChannelAnalysis? = null,
+    val services: io.github.jesperlund.wifidoctor.core.model.ServiceCheck? = null,
     val savedRunId: Long? = null,
     val message: String? = null,
 )
@@ -116,7 +117,7 @@ class DashboardViewModel @Inject constructor(
             is EngineEvent.Finished -> {
                 val id = repository.save(RunRecord.from(event.measurements, event.diagnosis))
                 _uiState.update {
-                    it.copy(running = false, diagnosis = event.diagnosis, channels = event.measurements.channels, savedRunId = id, throughput = null)
+                    it.copy(running = false, diagnosis = event.diagnosis, channels = event.measurements.channels, services = event.measurements.services, savedRunId = id, throughput = null)
                 }
             }
         }

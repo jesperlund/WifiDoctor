@@ -51,7 +51,8 @@ Stack: Kotlin, Jetpack Compose (Material 3, dynamic colour, light/dark), a singl
 | 5 | Speed | Download (≤10 s / ≤100 MB) then upload (chunked POST, ≤8 s; measured after a 1 s warm-up so the socket buffer doesn't inflate it), default Cloudflare's speed endpoints, with progress and cancellation |
 | 6 | Under load | While step 5 runs, a TCP round trip to the first internet target every 250 ms. Compared with idle latency from step 3, this measures **bufferbloat**, the usual reason calls stutter while speed tests look fine |
 | 7 | Calls (UDP) | Bursts of 15 STUN Binding requests 50 ms apart (shaped like call audio) to Cloudflare (UDP 3478), Google (UDP 19302) and a Microsoft Teams relay (UDP 3478). Gives UDP round trip, jitter and loss, whether UDP or Teams' port is blocked, and the **NAT type** (one local socket for every server: if the public port changes, the NAT is symmetric) |
-| 8 | Congestion + channel plan | Wi-Fi scan; counts networks on the same / overlapping channels, then surveys **2.4 GHz and 5 GHz (and 6 GHz where permitted) regardless of which band you are connected to**, and suggests the best channel each band may legally use in your country |
+| 8 | Apps (Instagram, Teams) | For each server the app depends on (Instagram: website, API, photo/video CDN, static CDN; Teams: service, Microsoft sign-in, call media relay on TCP 443, static CDN), one HTTPS request is timed phase by phase: DNS via the system resolver (what apps use), TCP connect, TLS handshake (certificate and host name verified) and the first response line of a `HEAD /`. Any HTTP status counts as reachable. Results are compared with a reference server (`speed.cloudflare.com`) |
+| 9 | Congestion + channel plan | Wi-Fi scan; counts networks on the same / overlapping channels, then surveys **2.4 GHz and 5 GHz (and 6 GHz where permitted) regardless of which band you are connected to**, and suggests the best channel each band may legally use in your country |
 
 If the phone is not connected, layers 2–6 are skipped. Every probe runs on `Dispatchers.IO` with connect/read timeouts and checks for cancellation between samples, and the whole run can be cancelled from the UI.
 
@@ -77,6 +78,9 @@ If the phone is not connected, layers 2–6 are skipped. Every probe runs on `Di
 | UDP blocked | no STUN server answers while TCP works → calls fall back to TCP | FAIL / calls |
 | Teams port blocked | nothing answers on UDP 3478 but other UDP works | WARN / calls |
 | Choppy call traffic | UDP round trip > 150 ms, jitter > 30 ms or loss > 1% (FAIL ≥ 5%), per Teams network guidance | WARN/FAIL / calls |
+| App blocked by DNS filter | an app server's name resolves to 0.0.0.0 / 127.x / a private address (Pi-hole, AdGuard, NextDNS, router parental controls) | FAIL / apps |
+| App servers unreachable | DNS works but connect, TLS or response fails while the reference works; TLS failures add an interception/clock hint | WARN (some servers) / FAIL (all) / apps |
+| Slow route to an app | median connect time > 3× the reference and ≥ 80 ms more (poor provider routing/peering), or first response > 1.5 s | WARN / apps |
 | Symmetric NAT | public port differs per destination (double NAT / carrier-grade NAT) → calls get relayed | WARN / calls |
 
 All thresholds live in `DiagnoserConfig`.
@@ -137,6 +141,7 @@ Privacy: no analytics, no ads, no crash reporting, no accounts. The only traffic
 - **Channel width** is not in `WifiInfo`, so it comes from the scan entry of the connected BSSID and may be missing until a scan has run.
 - **The call monitor and the latency-under-load test use TCP handshakes**, not the app's own media packets. They show the same queueing and drop-outs, but cannot see problems specific to one service's servers. The UDP test checks the call path separately.
 - **The Teams relay** may not answer plain STUN requests from outside a Teams session. If only that server fails, no problem is reported; only "all UDP blocked" or "port 3478 blocked everywhere" is.
+- **App server checks measure the path, not the content.** A `HEAD /` to a CDN host may return 4xx; that still proves the route works. Video download speed from Meta's CDN is not measured. DNS times come from the system resolver and may be cached.
 - **Latency under load needs a few seconds of load.** On very fast lines a 100 MB download can finish too quickly to sample; the layer then says so.
 - **Regulatory data is simplified:** indoor rules only, no power limits, and no outdoor or very recent rule changes. Access points' country elements need Android 11+. Your router may also offer fewer channels than the law allows. Use the Settings override if the detected country is wrong.
 - **Wi-Fi standard** (`getWifiStandard`) needs Android 11. On older versions, link-speed expectations fall back to per-band defaults.
@@ -226,7 +231,7 @@ After the first manual upload (Play only accepts API uploads for an app that alr
 
 ## Next steps
 
-- Service-specific tests: DNS, connect time and throughput to Instagram's and Teams' actual servers (`*.cdninstagram.com`, Teams media relays).
+- Download throughput from Meta's and Microsoft's CDNs (needs stable, large public test objects, which neither offers).
 - IPv6 health and path MTU (large-packet) checks.
 - Read routers' BSS Load element (channel utilisation %, connected stations) from scan results.
 - Warn about phone settings that interfere: VPN, Private DNS, Data Saver, Battery Saver.

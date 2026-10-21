@@ -40,6 +40,10 @@ data class DiagnoserConfig(
     val udpJitterWarnMs: Double = 30.0,
     val udpLossWarnPercent: Double = 1.0,
     val udpLossFailPercent: Double = 5.0,
+    /** An app's servers are "far" if a round trip takes this many times the reference and at least the margin longer. */
+    val serviceSlowFactor: Double = 3.0,
+    val serviceSlowMarginMs: Double = 80.0,
+    val serviceSlowFirstByteMs: Double = 1_500.0,
 )
 
 /** One diagnostic rule. Returns null when the rule does not apply. */

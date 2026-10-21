@@ -119,6 +119,8 @@ data class Measurements(
     val loaded: LoadedLatency? = null,
     /** UDP round trips and NAT behaviour on the path voice/video calls use. */
     val realtime: RealtimeResult? = null,
+    /** Reachability and timing of the servers specific apps use. */
+    val services: ServiceCheck? = null,
     /** Per-band channel survey (2.4, 5 and, where permitted, 6 GHz) with region-aware suggestions. */
     val channels: io.github.jesperlund.wifidoctor.core.wifi.ChannelAnalysis? = null,
 ) {
@@ -140,6 +142,7 @@ enum class Layer(val label: String) {
     THROUGHPUT("Speed"),
     LOAD("Under load"),
     REALTIME("Calls (UDP)"),
+    SERVICES("Apps (Instagram, Teams)"),
     CONGESTION("Congestion"),
 }
 
@@ -227,4 +230,87 @@ data class RealtimeResult(val servers: List<UdpProbeResult>, val nat: NatBehavio
     val best: UdpProbeResult?
         get() = servers.filter { it.reachable }
             .minWithOrNull(compareBy<UdpProbeResult> { it.stats.lossPercent }.thenBy { it.stats.avgMs ?: Double.MAX_VALUE })
+}
+
+/** One server an app depends on. Any HTTP status from [path] counts as reachable. */
+data class ServiceEndpoint(val host: String, val role: String, val port: Int = 443, val path: String = "/")
+
+data class ServiceTarget(val id: String, val name: String, val endpoints: List<ServiceEndpoint>)
+
+/** The apps WifiDoctor checks by default, and the neutral reference they are compared with. */
+object Services {
+    val INSTAGRAM = ServiceTarget(
+        "instagram", "Instagram",
+        listOf(
+            ServiceEndpoint("www.instagram.com", "Website and login"),
+            ServiceEndpoint("i.instagram.com", "App feed and messages (API)"),
+            ServiceEndpoint("scontent.cdninstagram.com", "Photos and videos (CDN)"),
+            ServiceEndpoint("static.cdninstagram.com", "App assets (CDN)"),
+        ),
+    )
+    val TEAMS = ServiceTarget(
+        "teams", "Microsoft Teams",
+        listOf(
+            ServiceEndpoint("teams.microsoft.com", "Teams service"),
+            ServiceEndpoint("login.microsoftonline.com", "Microsoft sign-in"),
+            ServiceEndpoint("worldaz.tr.teams.microsoft.com", "Call media relay (TCP 443)"),
+            ServiceEndpoint("statics.teams.cdn.office.net", "App assets (CDN)"),
+        ),
+    )
+    val DEFAULTS = listOf(INSTAGRAM, TEAMS)
+    val BASELINE = ServiceEndpoint("speed.cloudflare.com", "Reference server")
+}
+
+enum class EndpointFailure(val label: String) {
+    DNS_FAILED("Name lookup failed"),
+    DNS_BLOCKED("Blocked by DNS filter"),
+    CONNECT_FAILED("Cannot connect"),
+    TLS_FAILED("Secure connection failed"),
+    HTTP_FAILED("No response"),
+}
+
+/** Phase timings in ms for one HTTPS request; null when the phase was not reached. */
+data class EndpointResult(
+    val endpoint: ServiceEndpoint,
+    val addresses: List<String> = emptyList(),
+    val dnsMs: Double? = null,
+    val connectMs: Double? = null,
+    val tlsMs: Double? = null,
+    val firstByteMs: Double? = null,
+    val httpStatus: Int? = null,
+    val failure: EndpointFailure? = null,
+    val error: String? = null,
+) {
+    val ok: Boolean get() = failure == null
+
+    /** Time until the first response byte, as an app would experience a fresh connection. */
+    val totalMs: Double?
+        get() = if (!ok) null else listOfNotNull(dnsMs, connectMs, tlsMs, firstByteMs).sum()
+}
+
+data class ServiceResult(val target: ServiceTarget, val endpoints: List<EndpointResult>) {
+    val failed: List<EndpointResult> get() = endpoints.filter { !it.ok }
+    val allFailed: Boolean get() = endpoints.isNotEmpty() && endpoints.none { it.ok }
+
+    /** Median TCP connect time (≈ one network round trip) over the endpoints that answered. */
+    val medianConnectMs: Double?
+        get() = io.github.jesperlund.wifidoctor.core.probe.ProbeMath.median(endpoints.mapNotNull { it.connectMs?.takeIf { _ -> it.ok } })
+
+    val medianTotalMs: Double?
+        get() = io.github.jesperlund.wifidoctor.core.probe.ProbeMath.median(endpoints.mapNotNull { it.totalMs })
+}
+
+data class ServiceCheck(val results: List<ServiceResult>, val baseline: EndpointResult?) {
+    fun result(id: String): ServiceResult? = results.firstOrNull { it.target.id == id }
+
+    /** Compact "Instagram:OK:120;Microsoft Teams:FAIL" form for history and CSV. */
+    val summary: String
+        get() = results.joinToString(";") { r ->
+            val state = when {
+                r.allFailed -> "FAIL"
+                r.failed.isNotEmpty() -> "PARTIAL"
+                else -> "OK"
+            }
+            "${r.target.name}:$state" + (r.medianTotalMs?.let { ":${it.toInt()}ms" } ?: "")
+        }
 }

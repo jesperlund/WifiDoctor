@@ -31,6 +31,7 @@ class DataMappingTest {
             kind = io.github.jesperlund.wifidoctor.core.history.RunKind.CALL_MONITOR, uploadMbps = 12.5,
             loadedDownIncreaseMs = 40.0, loadedUpIncreaseMs = 220.0, udpRttMs = 25.0, udpJitterMs = 3.0, udpLossPercent = 0.0,
             natBehavior = "SYMMETRIC", internetP95Ms = 80.0, dropouts = 2, monitorDurationMs = 300_000,
+            serviceSummary = "Instagram:OK:120ms;Microsoft Teams:PARTIAL:200ms",
             severity = Severity.WARN,
             layer = Layer.DNS, verdict = "Slow DNS", explanation = "why", fixes = listOf("one", "two"),
         )
@@ -86,6 +87,7 @@ class DataMappingTest {
         val custom = s.copy(uploadUrl = "https://up.example.com/post", udpTestEnabled = false).toRunConfig(false)
         assertEquals("https://up.example.com/post", custom.uploadUrl)
         assertFalse(custom.runRealtime)
+        assertFalse(s.copy(servicesTestEnabled = false).toRunConfig(false).runServices)
         val hints = io.github.jesperlund.wifidoctor.core.wifi.RegionHints(override = "FR")
         assertEquals(hints, s.toRunConfig(false, regionHints = hints).regionHints)
     }

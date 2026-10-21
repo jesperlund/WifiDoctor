@@ -45,6 +45,7 @@ import io.github.jesperlund.wifidoctor.core.model.EnvironmentStatus
 import io.github.jesperlund.wifidoctor.core.model.LinkInfo
 import io.github.jesperlund.wifidoctor.core.probe.ThroughputProgress
 import io.github.jesperlund.wifidoctor.ui.components.ChannelAdviceCard
+import io.github.jesperlund.wifidoctor.ui.components.ServicesCard
 import io.github.jesperlund.wifidoctor.ui.components.DiagnosisCard
 import io.github.jesperlund.wifidoctor.ui.components.LayerStepper
 import io.github.jesperlund.wifidoctor.ui.components.NoticeCard
@@ -97,6 +98,7 @@ fun DashboardScreen(
             }
         }
         state.diagnosis?.let { d -> item { DiagnosisCard(d, title = "Result") } }
+        state.services?.let { s -> item { ServicesCard(s) } }
         state.channels?.let { c -> item { ChannelAdviceCard(c) } }
         item { CallMonitorEntry(onOpenMonitor) }
     }

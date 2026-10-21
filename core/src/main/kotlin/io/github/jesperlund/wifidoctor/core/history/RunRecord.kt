@@ -65,6 +65,8 @@ data class RunRecord(
     val internetP95Ms: Double? = null,
     val dropouts: Int? = null,
     val monitorDurationMs: Long? = null,
+    /** App server checks, e.g. "Instagram:OK:180ms;Microsoft Teams:PARTIAL:240ms". */
+    val serviceSummary: String? = null,
     val severity: Severity,
     val layer: Layer? = null,
     val verdict: String,
@@ -118,6 +120,7 @@ data class RunRecord(
                 udpJitterMs = m.realtime?.best?.stats?.jitterMs,
                 udpLossPercent = m.realtime?.let { r -> r.best?.stats?.lossPercent ?: if (r.servers.isEmpty()) null else 100.0 },
                 natBehavior = m.realtime?.nat?.name,
+                serviceSummary = m.services?.summary,
                 severity = d.severity,
                 layer = d.layer,
                 verdict = d.verdict,
