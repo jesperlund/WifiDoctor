@@ -33,7 +33,7 @@ interface RunDao {
     suspend fun clear()
 }
 
-@Database(entities = [RunEntity::class], version = 2, exportSchema = false)
+@Database(entities = [RunEntity::class], version = 3, exportSchema = false)
 abstract class WifiDoctorDatabase : RoomDatabase() {
     abstract fun runDao(): RunDao
 
@@ -46,6 +46,25 @@ abstract class WifiDoctorDatabase : RoomDatabase() {
                 listOf(
                     "countryCode TEXT", "routerChannel24 INTEGER", "suggestedChannel24 INTEGER",
                     "routerChannel5 INTEGER", "suggestedChannel5 INTEGER", "suggestedWidth5 INTEGER",
+                ).forEach { db.execSQL("ALTER TABLE runs ADD COLUMN $it") }
+            }
+        }
+
+        /** v3: upload, latency under load, UDP/NAT and call-monitor results. */
+        val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                listOf(
+                    "kind TEXT",
+                    "uploadMbps REAL",
+                    "loadedDownIncreaseMs REAL",
+                    "loadedUpIncreaseMs REAL",
+                    "udpRttMs REAL",
+                    "udpJitterMs REAL",
+                    "udpLossPercent REAL",
+                    "natBehavior TEXT",
+                    "internetP95Ms REAL",
+                    "dropouts INTEGER",
+                    "monitorDurationMs INTEGER",
                 ).forEach { db.execSQL("ALTER TABLE runs ADD COLUMN $it") }
             }
         }

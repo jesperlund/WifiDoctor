@@ -5,7 +5,11 @@ import io.github.jesperlund.wifidoctor.core.engine.LinkSource
 import io.github.jesperlund.wifidoctor.core.history.RunRecord
 import io.github.jesperlund.wifidoctor.core.model.EnvironmentStatus
 import io.github.jesperlund.wifidoctor.core.model.LinkInfo
+import io.github.jesperlund.wifidoctor.core.model.NatBehavior
+import io.github.jesperlund.wifidoctor.core.model.ProbeMethod
 import io.github.jesperlund.wifidoctor.core.model.ProbeStats
+import io.github.jesperlund.wifidoctor.core.model.RealtimeResult
+import io.github.jesperlund.wifidoctor.core.model.UdpProbeResult
 import io.github.jesperlund.wifidoctor.core.model.ScanEntry
 import io.github.jesperlund.wifidoctor.core.model.ScanSnapshot
 import io.github.jesperlund.wifidoctor.core.model.ThroughputResult
@@ -128,5 +132,11 @@ fun fakeEngineFactory(
         dnsTimer = FakeDnsTimer(),
         throughputTester = throughput,
         clock = { 1_000L },
+        realtimeTester = { servers, samples, _, _ ->
+            RealtimeResult(
+                servers.map { UdpProbeResult(it, ProbeMath.stats(it.label, List(samples) { 20.0 }, ProbeMethod.UDP), "203.0.113.9:4000") },
+                NatBehavior.ENDPOINT_INDEPENDENT,
+            )
+        },
     )
 }

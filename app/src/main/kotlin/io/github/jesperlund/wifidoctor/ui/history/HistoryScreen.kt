@@ -107,7 +107,10 @@ fun HistoryScreen(viewModel: HistoryViewModel = hiltViewModel()) {
 
         state.selected?.let { run ->
             item(key = "selected") {
-                DiagnosisCard(run.toDiagnosis(), title = "Run of ${formatTime(run.timestampMs)}" + (run.roomLabel?.let { " · $it" } ?: ""))
+                DiagnosisCard(
+                    run.toDiagnosis(),
+                    title = "${run.kind.label} of ${formatTime(run.timestampMs)}" + (run.roomLabel?.let { " · $it" } ?: ""),
+                )
             }
         }
 
@@ -152,7 +155,7 @@ private fun RunRow(run: RunRecord, isDrop: Boolean, isSelected: Boolean, onClick
     ) {
         Column(Modifier.weight(1f)) {
             Text(
-                formatTime(run.timestampMs) + (run.roomLabel?.let { " · $it" } ?: ""),
+                formatTime(run.timestampMs) + " · " + run.kind.label + (run.roomLabel?.let { " · $it" } ?: ""),
                 style = MaterialTheme.typography.bodyMedium,
                 fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
             )

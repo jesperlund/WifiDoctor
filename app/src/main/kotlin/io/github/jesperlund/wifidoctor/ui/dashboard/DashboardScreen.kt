@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -54,6 +55,7 @@ import io.github.jesperlund.wifidoctor.ui.components.SectionTitle
 fun DashboardScreen(
     snackbar: SnackbarHostState,
     onRequestPermissions: () -> Unit,
+    onOpenMonitor: () -> Unit,
     viewModel: DashboardViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
@@ -96,6 +98,24 @@ fun DashboardScreen(
         }
         state.diagnosis?.let { d -> item { DiagnosisCard(d, title = "Result") } }
         state.channels?.let { c -> item { ChannelAdviceCard(c) } }
+        item { CallMonitorEntry(onOpenMonitor) }
+    }
+}
+
+@Composable
+private fun CallMonitorEntry(onOpen: () -> Unit) {
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            SectionTitle("Calls or videos still breaking up?")
+            Text(
+                "A quick check can look fine while calls fail on short drop-outs. The call monitor measures every " +
+                    "200 ms for several minutes while you are in a Teams, WhatsApp or FaceTime call, and shows when and where it breaks.",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            OutlinedButton(onClick = onOpen, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
+                Text("Open call monitor")
+            }
+        }
     }
 }
 
@@ -190,7 +210,7 @@ private fun RunButton(running: Boolean, enabled: Boolean, onRun: () -> Unit, onC
 private fun ThroughputBar(p: ThroughputProgress) {
     val speed = p.mbps?.let { "%.1f Mbps".format(it) } ?: "measuring…"
     Column(Modifier.padding(top = 8.dp)) {
-        Text("Download: $speed", style = MaterialTheme.typography.bodyMedium)
+        Text((if (p.upload) "Upload" else "Download") + ": $speed", style = MaterialTheme.typography.bodyMedium)
         LinearProgressIndicator(
             progress = { p.fraction },
             modifier = Modifier

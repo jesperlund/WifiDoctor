@@ -48,8 +48,10 @@ Stack: Kotlin, Jetpack Compose (Material 3, dynamic colour, light/dark), a singl
 | 2 | Gateway | 10 TCP-connect probes to the router IP from `LinkProperties` (DHCP fallback): avg/max latency, jitter, loss % |
 | 3 | Internet | The same probes to each target (default `1.1.1.1`, `8.8.8.8`) |
 | 4 | DNS | 5 lookups via the network's DNS server (raw UDP query, uncached; system resolver if unknown) vs. `1.1.1.1` |
-| 5 | Throughput | Download from the configurable URL (default Cloudflare's speed endpoint) for ≤10 s / ≤50 MB, with progress and cancellation |
-| 6 | Congestion + channel plan | Wi-Fi scan; counts networks on the same / overlapping channels, then surveys **2.4 GHz and 5 GHz (and 6 GHz where permitted) regardless of which band you are connected to**, and suggests the best channel each band may legally use in your country |
+| 5 | Speed | Download (≤10 s / ≤100 MB) then upload (chunked POST, ≤8 s; measured after a 1 s warm-up so the socket buffer doesn't inflate it), default Cloudflare's speed endpoints, with progress and cancellation |
+| 6 | Under load | While step 5 runs, a TCP round trip to the first internet target every 250 ms. Compared with idle latency from step 3, this measures **bufferbloat**, the usual reason calls stutter while speed tests look fine |
+| 7 | Calls (UDP) | Bursts of 15 STUN Binding requests 50 ms apart (shaped like call audio) to Cloudflare (UDP 3478), Google (UDP 19302) and a Microsoft Teams relay (UDP 3478). Gives UDP round trip, jitter and loss, whether UDP or Teams' port is blocked, and the **NAT type** (one local socket for every server: if the public port changes, the NAT is symmetric) |
+| 8 | Congestion + channel plan | Wi-Fi scan; counts networks on the same / overlapping channels, then surveys **2.4 GHz and 5 GHz (and 6 GHz where permitted) regardless of which band you are connected to**, and suggests the best channel each band may legally use in your country |
 
 If the phone is not connected, layers 2–6 are skipped. Every probe runs on `Dispatchers.IO` with connect/read timeouts and checks for cancellation between samples, and the whole run can be cancelled from the UI.
 
@@ -70,6 +72,12 @@ If the phone is not connected, layers 2–6 are skipped. Every probe runs on `Di
 | Crowded channel | ≥ 4 networks on the same channel, or ≥ 6 same + overlapping | WARN / congestion |
 | Channel plan | your router's channel on any band is not permitted in the detected country, a permitted channel is clearly quieter (score ≥ 1.0 lower and ≥ 1.5× better), or 2.4 GHz uses 40 MHz among ≥ 3 neighbours | WARN / congestion |
 | Slow download | < 5 Mbps | WARN / throughput |
+| Slow upload | < 2 Mbps (FAIL < 0.5): too little for HD video calls | WARN/FAIL / speed |
+| Bufferbloat | latency rises ≥ 60 ms under load (FAIL ≥ 200 ms), or ≥ 5% loss under load → enable SQM | WARN/FAIL / under load |
+| UDP blocked | no STUN server answers while TCP works → calls fall back to TCP | FAIL / calls |
+| Teams port blocked | nothing answers on UDP 3478 but other UDP works | WARN / calls |
+| Choppy call traffic | UDP round trip > 150 ms, jitter > 30 ms or loss > 1% (FAIL ≥ 5%), per Teams network guidance | WARN/FAIL / calls |
+| Symmetric NAT | public port differs per destination (double NAT / carrier-grade NAT) → calls get relayed | WARN / calls |
 
 All thresholds live in `DiagnoserConfig`.
 
@@ -92,6 +100,19 @@ The country comes from, in order: the **Settings override**, the 802.11d **count
 
 `ChannelPlanner` scores every permitted channel per band: each overlapping neighbour adds a weight based on its signal strength (−70 dBm = 1.0, −40 dBm = 2.0). On 2.4 GHz a partially overlapping neighbour counts 1.5× (adjacent-channel interference is worse than sharing a channel). Your own router's BSSIDs (same SSID) are excluded. 2.4 GHz is planned at 20 MHz, preferring 1/6/11 on ties and penalising 12/13 (US-market devices can't use them). 5/6 GHz use the widest permitted 80/40/20 MHz block, with a small penalty for DFS (radar) channels. 6 GHz uses preferred scanning channels. A change is only advised when it clearly helps, since switching channel briefly disconnects everyone. The Dashboard shows a per-band card with an occupancy bar chart (★ suggested, • yours).
 
+## Call monitor
+
+A quick diagnosis can come back green while calls still fail, because calls break on brief drop-outs, latency spikes and access-point hand-overs that a few seconds of testing miss. **Dashboard → Open call monitor** starts a session of 2, 5, 15 or 30 minutes. The user then switches to Teams, WhatsApp, FaceTime or Instagram as usual.
+
+- **What it samples:** every 200 ms, a TCP round trip to the router and to the first internet target, in parallel. Every second, the Wi-Fi link (RSSI, BSSID, link speed). It uses about 1 MB per 10 minutes.
+- **Background running:** it runs in a foreground service (`specialUse`) with a live notification that has a **Stop** action, so it keeps measuring while another app is in front. The work itself is done by `CallMonitorController`, which runs in an application-wide coroutine scope.
+- **What it reports:**
+  - median, 95th and 99th percentile latency, jitter and loss for the router and the internet;
+  - **drop-outs:** 3 or more consecutive lost internet samples (≈0.6 s). Each drop-out is located on the **Wi-Fi** side (the router stopped answering too) or the **Internet** side (the router was fine). Its cause is **disconnected**, **switching access point** (BSSID changed within 2 s) or **weak signal** when the timeline shows one;
+  - scattered loss, latency spikes, access-point ping-pong and signal dips.
+- **Diagnosis:** `MonitorAnalyzer` turns the timeline into a diagnosis with fixes, for example fast roaming (802.11r/k/v) for hand-over gaps, SQM for spikes beyond the router, a channel change for Wi-Fi spikes, or the modem log and the provider for internet drop-outs.
+- **History:** sessions are saved to History as "Call monitor" runs. History stores the median as the average latency and keeps the 95th percentile, drop-out count and duration.
+
 ## Permissions
 
 | Permission | Why |
@@ -100,7 +121,8 @@ The country comes from, in order: the **Settings override**, the 802.11d **count
 | `NEARBY_WIFI_DEVICES` (Android 13+) | Wi-Fi scans. Not flagged `neverForLocation`, because that would let Android strip the BSSIDs that band-steering detection needs. |
 | `ACCESS_WIFI_STATE`, `CHANGE_WIFI_STATE` | Read Wi-Fi info and call `startScan()`. |
 | `ACCESS_NETWORK_STATE`, `INTERNET` | Network callbacks, probes and the speed test. |
-| `POST_NOTIFICATIONS` (Android 13+) | Asked when scheduled checks are turned on; used only for problem alerts. |
+| `POST_NOTIFICATIONS` (Android 13+) | Asked when scheduled checks or the call monitor are turned on; used for problem alerts and the monitor's live notification. |
+| `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_SPECIAL_USE` | Keep the user-started call monitor running while a call app is in front. Google Play asks for a short declaration (and a video) for special-use foreground services. |
 
 On first launch a rationale screen explains each permission before the system dialog appears. If the user denies, the app keeps working in **limited mode**: latency, DNS and speed still work, while the SSID/BSSID and congestion check are unavailable. After a permanent denial ("don't ask again") the screen offers *Open app settings*, and the Dashboard shows a notice with an *Allow* button.
 
@@ -113,6 +135,9 @@ Privacy: no analytics, no ads, no crash reporting, no accounts. The only traffic
 - **No raw ICMP.** Apps cannot open raw sockets without root. The main probe times TCP handshakes to ports 53/443/80 (whichever answers first): both SYN-ACK and RST ("connection refused") are full round trips. If every port is silently dropped, the app falls back to `/system/bin/ping` through `ProcessBuilder`, which exists on most but not all devices. Ping cannot be bound to the Wi-Fi network.
 - **Scan throttling.** Android 9+ allows 4 scans per 2 minutes in the foreground and 1 per 30 minutes in the background. When `startScan()` is refused, the app uses cached results and labels the congestion step "(cached scan)".
 - **Channel width** is not in `WifiInfo`, so it comes from the scan entry of the connected BSSID and may be missing until a scan has run.
+- **The call monitor and the latency-under-load test use TCP handshakes**, not the app's own media packets. They show the same queueing and drop-outs, but cannot see problems specific to one service's servers. The UDP test checks the call path separately.
+- **The Teams relay** may not answer plain STUN requests from outside a Teams session. If only that server fails, no problem is reported; only "all UDP blocked" or "port 3478 blocked everywhere" is.
+- **Latency under load needs a few seconds of load.** On very fast lines a 100 MB download can finish too quickly to sample; the layer then says so.
 - **Regulatory data is simplified:** indoor rules only, no power limits, and no outdoor or very recent rule changes. Access points' country elements need Android 11+. Your router may also offer fewer channels than the law allows. Use the Settings override if the detected country is wrong.
 - **Wi-Fi standard** (`getWifiStandard`) needs Android 11. On older versions, link-speed expectations fall back to per-band defaults.
 - **Background checks** cannot read the SSID/BSSID without `ACCESS_BACKGROUND_LOCATION`, which the app deliberately does not request. WorkManager may also defer runs (Doze, battery saver), and the minimum interval is 15 minutes.
@@ -168,6 +193,7 @@ Every push then produces a **wifidoctor-release** artifact containing the signed
 2. **Create app**: choose the name, default language, App, Free.
 3. **App content** (Policy section):
    - **Privacy policy URL**: required because the app uses location permissions. Host `PRIVACY.md` publicly (e.g. GitHub Pages, or the file's URL in a public repo) and update its contact line.
+   - **Foreground service declaration** (App content → Foreground service permissions): declare *special use*, e.g. "User-started network monitoring that keeps measuring latency and drop-outs while the user is in a voice/video call in another app". Attach a short screen recording of starting the call monitor and the notification.
    - **Data safety**: no data collected or shared. All data is processed and stored on the device; location-type data (Wi-Fi names/BSSIDs) is used only on the device.
    - **Ads**: none. **Target audience**: 18+ (or 13+). **Content rating** questionnaire: utility app, no sensitive content.
    - No background location is requested, so no location declaration form is needed.
@@ -199,6 +225,11 @@ After the first manual upload (Play only accepts API uploads for an app that alr
 - **Build environment:** the cloud sandbox this was written in could not reach Google's Maven repository (`dl.google.com` / `maven.google.com`). `:core` was built and tested locally against Maven Central; the full Android build and app tests were verified on GitHub Actions.
 
 ## Next steps
+
+- Service-specific tests: DNS, connect time and throughput to Instagram's and Teams' actual servers (`*.cdninstagram.com`, Teams media relays).
+- IPv6 health and path MTU (large-packet) checks.
+- Read routers' BSS Load element (channel utilisation %, connected stations) from scan results.
+- Warn about phone settings that interfere: VPN, Private DNS, Data Saver, Battery Saver.
 
 - Add a Play Store listing kit (screenshots via Compose previews or screenshot tests, feature graphic).
 

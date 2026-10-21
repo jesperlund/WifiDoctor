@@ -28,6 +28,9 @@ class DataMappingTest {
             internetTarget = "1.1.1.1", internetAvgMs = 18.0, dnsSystemMs = 40.0, dnsReferenceMs = 15.0,
             throughputMbps = 210.5, sameChannelNetworks = 2, overlappingNetworks = 1, countryCode = "DE",
             routerChannel24 = 11, suggestedChannel24 = 1, routerChannel5 = 36, suggestedChannel5 = 100, suggestedWidth5 = 80,
+            kind = io.github.jesperlund.wifidoctor.core.history.RunKind.CALL_MONITOR, uploadMbps = 12.5,
+            loadedDownIncreaseMs = 40.0, loadedUpIncreaseMs = 220.0, udpRttMs = 25.0, udpJitterMs = 3.0, udpLossPercent = 0.0,
+            natBehavior = "SYMMETRIC", internetP95Ms = 80.0, dropouts = 2, monitorDurationMs = 300_000,
             severity = Severity.WARN,
             layer = Layer.DNS, verdict = "Slow DNS", explanation = "why", fixes = listOf("one", "two"),
         )
@@ -80,6 +83,9 @@ class DataMappingTest {
         assertTrue(s.copy(speedTestInBackground = true).toRunConfig(metered = false, background = true).runThroughput)
         assertEquals(listOf("9.9.9.9"), s.toRunConfig(false).internetTargets)
         assertEquals(AppSettings.DEFAULT_TARGETS, s.copy(probeTargets = emptyList()).toRunConfig(false).internetTargets)
+        val custom = s.copy(uploadUrl = "https://up.example.com/post", udpTestEnabled = false).toRunConfig(false)
+        assertEquals("https://up.example.com/post", custom.uploadUrl)
+        assertFalse(custom.runRealtime)
         val hints = io.github.jesperlund.wifidoctor.core.wifi.RegionHints(override = "FR")
         assertEquals(hints, s.toRunConfig(false, regionHints = hints).regionHints)
     }

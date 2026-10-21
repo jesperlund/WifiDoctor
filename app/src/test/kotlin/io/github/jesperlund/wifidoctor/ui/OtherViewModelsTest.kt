@@ -225,6 +225,16 @@ class SettingsViewModelTest {
     }
 
     @Test
+    fun `upload url and udp test settings`() = runTest {
+        assertFalse(vm.setUploadUrl("not a url"))
+        assertTrue(vm.setUploadUrl("https://up.example.com/x"))
+        vm.setUdpTestEnabled(false)
+        advanceUntilIdle()
+        assertEquals("https://up.example.com/x", settings.state.value.uploadUrl)
+        assertFalse(settings.state.value.udpTestEnabled)
+    }
+
+    @Test
     fun `toggles are persisted`() = runTest {
         vm.setNotifyOnlyOnProblems(false)
         vm.setUsePingFallback(false)

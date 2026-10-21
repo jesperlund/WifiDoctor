@@ -8,7 +8,10 @@ import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Place
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import io.github.jesperlund.wifidoctor.ui.monitor.MonitorScreen
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
@@ -39,6 +42,8 @@ import io.github.jesperlund.wifidoctor.ui.permission.hasPermissions
 import io.github.jesperlund.wifidoctor.ui.rooms.RoomsScreen
 import io.github.jesperlund.wifidoctor.ui.settings.SettingsScreen
 
+const val MONITOR_ROUTE = "monitor"
+
 enum class Tab(val route: String, val label: String, val title: String, val icon: ImageVector) {
     DASHBOARD("dashboard", "Dashboard", "WifiDoctor", Icons.Filled.Home),
     ROOMS("rooms", "Rooms", "Walk test", Icons.Filled.Place),
@@ -68,9 +73,21 @@ fun WifiDoctorRoot(onPermissionsChanged: () -> Unit) {
     val backStack by navController.currentBackStackEntryAsState()
     val current = Tab.entries.firstOrNull { tab -> backStack?.destination?.hierarchy?.any { it.route == tab.route } == true }
         ?: Tab.DASHBOARD
+    val onMonitor = backStack?.destination?.route == MONITOR_ROUTE
 
     Scaffold(
-        topBar = { TopAppBar(title = { Text(current.title) }) },
+        topBar = {
+            TopAppBar(
+                title = { Text(if (onMonitor) "Call monitor" else current.title) },
+                navigationIcon = {
+                    if (onMonitor) {
+                        IconButton(onClick = { navController.popBackStack() }) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                        }
+                    }
+                },
+            )
+        },
         snackbarHost = { SnackbarHost(snackbar) },
         bottomBar = {
             NavigationBar {
@@ -93,8 +110,13 @@ fun WifiDoctorRoot(onPermissionsChanged: () -> Unit) {
     ) { padding ->
         NavHost(navController, startDestination = Tab.DASHBOARD.route, modifier = Modifier.padding(padding)) {
             composable(Tab.DASHBOARD.route) {
-                DashboardScreen(snackbar = snackbar, onRequestPermissions = { showRationale = true })
+                DashboardScreen(
+                    snackbar = snackbar,
+                    onRequestPermissions = { showRationale = true },
+                    onOpenMonitor = { navController.navigate(MONITOR_ROUTE) { launchSingleTop = true } },
+                )
             }
+            composable(MONITOR_ROUTE) { MonitorScreen(snackbar) }
             composable(Tab.ROOMS.route) { RoomsScreen(snackbar) }
             composable(Tab.HISTORY.route) { HistoryScreen() }
             composable(Tab.SETTINGS.route) { SettingsScreen(snackbar) }

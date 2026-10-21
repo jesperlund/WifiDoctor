@@ -129,6 +129,21 @@ fun SettingsScreen(snackbar: SnackbarHostState, viewModel: SettingsViewModel = h
                 )
                 OutlinedButton(onClick = { viewModel.setTestServerUrl(url) }, modifier = Modifier.heightIn(min = 48.dp)) { Text("Save URL") }
 
+                var uploadUrl by rememberSaveable(s.uploadUrl) { mutableStateOf(s.uploadUrl) }
+                OutlinedTextField(
+                    value = uploadUrl,
+                    onValueChange = { uploadUrl = it },
+                    label = { Text("Upload test URL") },
+                    supportingText = { Text("Receives an HTTP POST. Data used per test: up to ~8 s of upload.") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedButton(onClick = { viewModel.setUploadUrl(uploadUrl) }, modifier = Modifier.heightIn(min = 48.dp)) {
+                    Text("Save upload URL")
+                }
+                SwitchRow("Test the UDP path used by calls (STUN)", s.udpTestEnabled, viewModel::setUdpTestEnabled)
+
                 var targets by rememberSaveable(s.probeTargets) { mutableStateOf(s.probeTargets.joinToString(", ")) }
                 OutlinedTextField(
                     value = targets,

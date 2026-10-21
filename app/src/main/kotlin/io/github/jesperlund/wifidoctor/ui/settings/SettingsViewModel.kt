@@ -93,6 +93,18 @@ class SettingsViewModel @Inject constructor(
         return true
     }
 
+    fun setUploadUrl(url: String): Boolean {
+        if (!SettingsValidation.isValidUrl(url)) {
+            transient.update { it.copy(urlError = "Enter a full http:// or https:// URL") }
+            return false
+        }
+        transient.update { it.copy(urlError = null, message = "Upload URL saved") }
+        edit { it.copy(uploadUrl = url.trim()) }
+        return true
+    }
+
+    fun setUdpTestEnabled(value: Boolean) = edit { it.copy(udpTestEnabled = value) }
+
     /** Blank means "detect automatically". */
     fun setCountryOverride(code: String): Boolean {
         if (!SettingsValidation.isValidCountry(code)) {

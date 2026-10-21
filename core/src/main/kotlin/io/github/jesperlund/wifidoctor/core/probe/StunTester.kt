@@ -20,7 +20,7 @@ import kotlin.coroutines.coroutineContext
 import kotlin.random.Random
 
 /** Tests the UDP path that voice/video calls use. */
-interface RealtimeTester {
+fun interface RealtimeTester {
     suspend fun test(servers: List<StunServer>, samples: Int, intervalMs: Long, timeoutMs: Int): RealtimeResult
 }
 

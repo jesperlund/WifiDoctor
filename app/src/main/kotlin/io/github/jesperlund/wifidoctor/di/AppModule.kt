@@ -39,7 +39,26 @@ import dagger.Provides
 import dagger.hilt.InstallIn
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
+import javax.inject.Qualifier
 import javax.inject.Singleton
+import io.github.jesperlund.wifidoctor.core.probe.RttProbe
+import io.github.jesperlund.wifidoctor.core.probe.StunRealtimeTester
+import io.github.jesperlund.wifidoctor.monitor.CallMonitorController
+import io.github.jesperlund.wifidoctor.monitor.ForegroundKeeper
+import io.github.jesperlund.wifidoctor.monitor.MonitorRunner
+import io.github.jesperlund.wifidoctor.monitor.MonitorServiceKeeper
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+
+@Qualifier
+@Retention(AnnotationRetention.BINARY)
+annotation class ApplicationScope
+
+/** Wall-clock time, injectable for tests. */
+fun interface Clock {
+    fun now(): Long
+}
 
 /** Builds a [DiagnosticEngine] for the current settings (targets, ping fallback). */
 fun interface EngineFactory {
@@ -66,7 +85,7 @@ object AppModule {
     @Singleton
     fun database(@ApplicationContext context: Context): WifiDoctorDatabase =
         Room.databaseBuilder(context, WifiDoctorDatabase::class.java, WifiDoctorDatabase.NAME)
-            .addMigrations(WifiDoctorDatabase.MIGRATION_1_2)
+            .addMigrations(WifiDoctorDatabase.MIGRATION_1_2, WifiDoctorDatabase.MIGRATION_2_3)
             .build()
 
     @Provides
@@ -86,8 +105,24 @@ object AppModule {
             prober = FallbackProber(tcp, if (settings.usePingFallback) PingProber() else null),
             dnsTimer = DefaultDnsTimer(binding),
             throughputTester = HttpThroughputTester(binding),
+            realtimeTester = StunRealtimeTester(binding),
+            rttProbe = tcp,
         )
     }
+
+    /** Single TCP-handshake samples on the Wi-Fi network, for the call monitor. */
+    @Provides
+    @Singleton
+    fun rttProbe(binding: NetworkBinding): RttProbe = TcpConnectProber(binding)
+
+    @Provides
+    fun clock(): Clock = Clock(System::currentTimeMillis)
+
+    /** Lives as long as the process: the call monitor must outlive screens. */
+    @Provides
+    @Singleton
+    @ApplicationScope
+    fun applicationScope(): CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     @Provides
     @Singleton
@@ -107,4 +142,6 @@ abstract class BindingsModule {
     @Binds abstract fun scheduler(impl: WorkManagerCheckScheduler): CheckScheduler
     @Binds abstract fun documentWriter(impl: ContentResolverWriter): DocumentWriter
     @Binds abstract fun regionHints(impl: AndroidRegionHintsProvider): RegionHintsProvider
+    @Binds abstract fun monitorRunner(impl: CallMonitorController): MonitorRunner
+    @Binds abstract fun foregroundKeeper(impl: MonitorServiceKeeper): ForegroundKeeper
 }
