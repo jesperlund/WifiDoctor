@@ -21,6 +21,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 class ThroughputTesterTest {
     private lateinit var server: HttpServer
     private val slowClosed = AtomicBoolean(false)
+    private val uploaded = java.util.concurrent.atomic.AtomicLong(-1)
     private val base get() = "http://127.0.0.1:${server.address.port}"
 
     @Before
@@ -47,6 +48,19 @@ class ThroughputTesterTest {
                 slowClosed.set(true)
             }
         }
+        server.createContext("/up") { ex ->
+            var total = 0L
+            val buf = ByteArray(64 * 1024)
+            ex.requestBody.use { body -> while (true) { val n = body.read(buf); if (n < 0) break; total += n } }
+            uploaded.set(total)
+            ex.sendResponseHeaders(200, -1)
+            ex.close()
+        }
+        server.createContext("/up-denied") { ex ->
+            ex.requestBody.use { it.readBytes() }
+            ex.sendResponseHeaders(403, -1)
+            ex.close()
+        }
         server.executor = java.util.concurrent.Executors.newCachedThreadPool()
         server.start()
     }
@@ -68,6 +82,23 @@ class ThroughputTesterTest {
     fun `stops at the byte cap`() = runBlocking {
         val r = HttpThroughputTester(maxBytes = 256 * 1024).run("$base/file", 10_000)
         assertTrue(r.bytes in 256 * 1024 until 2 * 1024 * 1024)
+    }
+
+    @Test
+    fun `uploads for the given time and reports Mbps after warm-up`() = runBlocking {
+        val progress = mutableListOf<ThroughputProgress>()
+        val r = HttpThroughputTester(maxBytes = Long.MAX_VALUE).upload("$base/up", 1_500) { progress += it }
+        assertNull(r.error)
+        assertNotNull(r.mbps)
+        assertTrue(r.durationMs in 1_400..5_000)
+        assertTrue(progress.all { it.upload })
+        assertEquals(r.bytes, uploaded.get()) // the server received every byte
+    }
+
+    @Test
+    fun `upload errors are reported`() = runBlocking {
+        assertEquals("HTTP 403", HttpThroughputTester().upload("$base/up-denied", 300).error)
+        assertNotNull(HttpThroughputTester(connectTimeoutMs = 500).upload("http://127.0.0.1:1/x", 300).error)
     }
 
     @Test

@@ -4,6 +4,7 @@ import io.github.jesperlund.wifidoctor.core.model.Band
 import io.github.jesperlund.wifidoctor.core.model.Finding
 import io.github.jesperlund.wifidoctor.core.model.Layer
 import io.github.jesperlund.wifidoctor.core.model.Measurements
+import io.github.jesperlund.wifidoctor.core.model.NatBehavior
 import io.github.jesperlund.wifidoctor.core.model.ProbeStats
 import io.github.jesperlund.wifidoctor.core.model.Severity
 import io.github.jesperlund.wifidoctor.core.wifi.ChannelOption
@@ -28,6 +29,12 @@ object Rules {
             CongestionRule,
             ChannelPlanRule,
             SlowThroughputRule,
+            SlowUploadRule,
+            BufferbloatRule,
+            UdpBlockedRule,
+            CallPortBlockedRule,
+            UdpQualityRule,
+            SymmetricNatRule,
         )
     }
 
@@ -387,6 +394,156 @@ object Rules {
                     "Pause other downloads, backups and streams on the network and test again.",
                     "Compare with a wired speed test to see whether the plan itself is slow.",
                     "Contact your provider if speeds are far below what you pay for.",
+                ),
+            )
+        }
+    }
+
+    object SlowUploadRule : DiagnosisRule {
+        override fun evaluate(m: Measurements, config: DiagnoserConfig): Finding? {
+            val up = m.upload ?: return null
+            val mbps = up.mbps ?: return null
+            if (up.cancelled || mbps >= config.slowUploadMbps) return null
+            return Finding(
+                ruleId = "slow_upload",
+                severity = if (mbps < config.verySlowUploadMbps) Severity.FAIL else Severity.WARN,
+                layer = Layer.THROUGHPUT,
+                title = "Upload too slow for video calls",
+                explanation = "Upload ran at ${"%.1f".format(mbps)} Mbps. Teams needs about 1.5–4 Mbps up for your video " +
+                    "(more for screen sharing), and posting stories or videos needs more still. With too little upload " +
+                    "others see you frozen or pixelated even when you see them fine.",
+                fixes = listOf(
+                    "Pause cloud backups (photos, OneDrive, iCloud, Google Photos) and other uploads during calls.",
+                    "Turn off your own video in large meetings to save upload.",
+                    "Check your plan's upload speed; cable and DSL plans often have little. Ask your provider about a plan with more upload.",
+                ),
+            )
+        }
+    }
+
+    object BufferbloatRule : DiagnosisRule {
+        override fun evaluate(m: Measurements, config: DiagnoserConfig): Finding? {
+            val l = m.loaded ?: return null
+            val worst = l.worstIncreaseMs
+            val loss = listOfNotNull(l.download?.lossPercent, l.upload?.lossPercent).maxOrNull() ?: 0.0
+            val bloated = worst != null && worst >= config.bufferbloatWarnMs
+            val lossy = loss >= config.loadedLossWarnPercent
+            if (!bloated && !lossy) return null
+            val severe = (worst ?: 0.0) >= config.bufferbloatFailMs || loss >= 2 * config.loadedLossWarnPercent
+            val direction = when {
+                (l.uploadIncreaseMs ?: 0.0) > (l.downloadIncreaseMs ?: 0.0) -> "uploading"
+                else -> "downloading"
+            }
+            return Finding(
+                ruleId = "bufferbloat",
+                severity = if (severe) Severity.FAIL else Severity.WARN,
+                layer = Layer.LOAD,
+                title = "Latency spikes when the line is busy (bufferbloat)",
+                explanation = buildString {
+                    append("Idle latency to ${l.target} is ${l.idle?.avgMs?.toInt() ?: "?"} ms, but it rose by ")
+                    append(listOfNotNull(
+                        l.downloadIncreaseMs?.let { "${it.toInt()} ms while downloading" },
+                        l.uploadIncreaseMs?.let { "${it.toInt()} ms while uploading" },
+                    ).joinToString(" and "))
+                    if (lossy) append(", with ${"%.0f".format(loss)}% of probes lost")
+                    append(". The router or modem queues too much data, so whenever anyone streams, downloads or backs up ")
+                    append("photos, calls stutter and videos stall, even though speed tests look fine. Worst while $direction.")
+                },
+                fixes = listOf(
+                    "Turn on Smart Queue Management in the router (called SQM, fq_codel, CAKE, Smart QoS or Adaptive QoS), " +
+                        "set to about 90% of your plan's download and upload speeds.",
+                    "If the router has no SQM, consider one that does (OpenWrt, eero, Ubiquiti, ASUS, Fritz!Box and others support it).",
+                    "Short term: pause large downloads, game updates and cloud backups during calls.",
+                ),
+            )
+        }
+    }
+
+    private fun tcpInternetWorks(m: Measurements) = m.internet.any { it.received > 0 }
+
+    object UdpBlockedRule : DiagnosisRule {
+        override fun evaluate(m: Measurements, config: DiagnoserConfig): Finding? {
+            val r = m.realtime ?: return null
+            if (r.anyReachable || r.servers.isEmpty() || !tcpInternetWorks(m)) return null
+            return Finding(
+                ruleId = "udp_blocked",
+                severity = Severity.FAIL,
+                layer = Layer.REALTIME,
+                title = "UDP is blocked: calls fall back to a slower path",
+                explanation = "None of the ${r.servers.size} call servers answered over UDP, although the internet works over TCP. " +
+                    "Teams, WhatsApp, FaceTime and Meet then tunnel media over TCP, which turns small delays into stutter and freezes.",
+                fixes = listOf(
+                    "Check the router's firewall for rules blocking outgoing UDP, and turn off any 'SIP ALG' setting.",
+                    "If you use a VPN or a security/parental-control app, test with it turned off.",
+                    "On a work or school network, ask IT to allow UDP 3478–3481 to Microsoft Teams.",
+                ),
+            )
+        }
+    }
+
+    object CallPortBlockedRule : DiagnosisRule {
+        override fun evaluate(m: Measurements, config: DiagnoserConfig): Finding? {
+            val r = m.realtime ?: return null
+            val on3478 = r.servers.filter { it.server.port == 3478 }
+            val others = r.servers.filter { it.server.port != 3478 }
+            if (on3478.isEmpty() || on3478.any { it.reachable } || others.none { it.reachable }) return null
+            return Finding(
+                ruleId = "call_port_blocked",
+                severity = Severity.WARN,
+                layer = Layer.REALTIME,
+                title = "Teams' media port (UDP 3478) is blocked",
+                explanation = "UDP works on other ports but no server answered on port 3478, which Teams uses for audio and video. " +
+                    "Teams will fall back to TCP or port 443, which copes worse with delay.",
+                fixes = listOf(
+                    "Allow outgoing UDP 3478–3481 in the router or firewall, and turn off 'SIP ALG'.",
+                    "Test with any VPN or filtering app turned off.",
+                ),
+            )
+        }
+    }
+
+    object UdpQualityRule : DiagnosisRule {
+        override fun evaluate(m: Measurements, config: DiagnoserConfig): Finding? {
+            val best = m.realtime?.best ?: return null
+            val s = best.stats
+            val problems = buildList {
+                if ((s.avgMs ?: 0.0) > config.udpRttWarnMs) add("round trip ${s.avgMs?.toInt()} ms (target under ${config.udpRttWarnMs.toInt()})")
+                if ((s.jitterMs ?: 0.0) > config.udpJitterWarnMs) add("jitter ${s.jitterMs?.toInt()} ms (target under ${config.udpJitterWarnMs.toInt()})")
+                if (s.lossPercent > config.udpLossWarnPercent) add("${"%.0f".format(s.lossPercent)}% packet loss (target under ${config.udpLossWarnPercent.toInt()}%)")
+            }
+            if (problems.isEmpty()) return null
+            return Finding(
+                ruleId = "udp_quality",
+                severity = if (s.lossPercent >= config.udpLossFailPercent) Severity.FAIL else Severity.WARN,
+                layer = Layer.REALTIME,
+                title = "Call traffic is choppy",
+                explanation = "A burst of call-like UDP packets to ${best.server.label} showed ${problems.joinToString(", ")}. " +
+                    "Audio breaks up and video freezes at these levels.",
+                fixes = listOf(
+                    "Run the call monitor during a real call to see when and where it happens.",
+                    "Move closer to the router or use 5 GHz.",
+                    "If latency also rises under load, enable Smart Queue Management (SQM) on the router.",
+                ),
+            )
+        }
+    }
+
+    object SymmetricNatRule : DiagnosisRule {
+        override fun evaluate(m: Measurements, config: DiagnoserConfig): Finding? {
+            val r = m.realtime ?: return null
+            if (r.nat != NatBehavior.SYMMETRIC) return null
+            return Finding(
+                ruleId = "symmetric_nat",
+                severity = Severity.WARN,
+                layer = Layer.REALTIME,
+                title = "Strict (symmetric) NAT",
+                explanation = "Your public port changes for every destination. Calls cannot connect directly and must be " +
+                    "relayed through a server, which adds delay. This often comes from two routers in a row (double NAT) or " +
+                    "carrier-grade NAT at the provider.",
+                fixes = listOf(
+                    "If you have a provider modem/router plus your own router, put the provider's box in bridge mode.",
+                    "Enable UPnP or 'endpoint-independent mapping' (sometimes called full-cone NAT) in the router if available.",
+                    "Ask your provider whether you are behind carrier-grade NAT and whether a public IPv4 address or IPv6 is available.",
                 ),
             )
         }

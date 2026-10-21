@@ -54,7 +54,7 @@ data class ProbeStats(
     val allLost: Boolean get() = sent > 0 && received == 0
 }
 
-enum class ProbeMethod { TCP, PING, NONE }
+enum class ProbeMethod { TCP, PING, UDP, NONE }
 
 /** Result of timing DNS lookups through the system resolver and a reference resolver. */
 data class DnsResult(
@@ -113,6 +113,12 @@ data class Measurements(
     val throughput: ThroughputResult? = null,
     val scan: ScanSnapshot? = null,
     val congestion: CongestionResult? = null,
+    /** Upload test (the download test is [throughput]). */
+    val upload: ThroughputResult? = null,
+    /** Latency while the download and upload tests saturate the line (bufferbloat). */
+    val loaded: LoadedLatency? = null,
+    /** UDP round trips and NAT behaviour on the path voice/video calls use. */
+    val realtime: RealtimeResult? = null,
     /** Per-band channel survey (2.4, 5 and, where permitted, 6 GHz) with region-aware suggestions. */
     val channels: io.github.jesperlund.wifidoctor.core.wifi.ChannelAnalysis? = null,
 ) {
@@ -132,6 +138,8 @@ enum class Layer(val label: String) {
     INTERNET("Internet"),
     DNS("DNS"),
     THROUGHPUT("Speed"),
+    LOAD("Under load"),
+    REALTIME("Calls (UDP)"),
     CONGESTION("Congestion"),
 }
 
@@ -154,3 +162,69 @@ data class Diagnosis(
     val fixes: List<String>,
     val findings: List<Finding> = emptyList(),
 )
+
+/**
+ * Latency to an internet target while idle versus while the line is saturated. A large increase
+ * ("bufferbloat") makes calls stutter whenever anyone downloads or uploads.
+ */
+data class LoadedLatency(
+    val target: String,
+    val idle: ProbeStats?,
+    val download: ProbeStats?,
+    val upload: ProbeStats?,
+) {
+    val downloadIncreaseMs: Double? get() = increase(download)
+    val uploadIncreaseMs: Double? get() = increase(upload)
+    val worstIncreaseMs: Double? get() = listOfNotNull(downloadIncreaseMs, uploadIncreaseMs).maxOrNull()
+
+    private fun increase(loaded: ProbeStats?): Double? {
+        val base = idle?.avgMs ?: return null
+        val under = loaded?.avgMs ?: return null
+        return (under - base).coerceAtLeast(0.0)
+    }
+}
+
+data class StunServer(val host: String, val port: Int, val label: String = "$host:$port") {
+    companion object {
+        /** "host:port" or "host" (port 3478). */
+        fun parse(spec: String, label: String? = null): StunServer? {
+            val trimmed = spec.trim()
+            if (trimmed.isEmpty()) return null
+            val host = trimmed.substringBeforeLast(':', trimmed)
+            val port = if (trimmed.contains(':')) trimmed.substringAfterLast(':').toIntOrNull() ?: return null else 3478
+            if (host.isBlank() || port !in 1..65535) return null
+            return StunServer(host, port, label ?: "$host:$port")
+        }
+
+        val DEFAULTS = listOf(
+            StunServer("stun.cloudflare.com", 3478, "Cloudflare (UDP 3478)"),
+            StunServer("stun.l.google.com", 19302, "Google (UDP 19302)"),
+            StunServer("worldaz.tr.teams.microsoft.com", 3478, "Microsoft Teams relay (UDP 3478)"),
+        )
+    }
+}
+
+data class UdpProbeResult(
+    val server: StunServer,
+    val stats: ProbeStats,
+    /** Public "ip:port" the NAT mapped us to, as seen by the server. */
+    val mappedAddress: String?,
+    val error: String? = null,
+) {
+    val reachable: Boolean get() = stats.received > 0
+}
+
+enum class NatBehavior(val label: String) {
+    ENDPOINT_INDEPENDENT("Open (same mapping for every destination)"),
+    SYMMETRIC("Symmetric (calls must be relayed)"),
+    UNKNOWN("Unknown"),
+}
+
+data class RealtimeResult(val servers: List<UdpProbeResult>, val nat: NatBehavior) {
+    val anyReachable: Boolean get() = servers.any { it.reachable }
+
+    /** Best answering server: lowest loss, then lowest latency. */
+    val best: UdpProbeResult?
+        get() = servers.filter { it.reachable }
+            .minWithOrNull(compareBy<UdpProbeResult> { it.stats.lossPercent }.thenBy { it.stats.avgMs ?: Double.MAX_VALUE })
+}

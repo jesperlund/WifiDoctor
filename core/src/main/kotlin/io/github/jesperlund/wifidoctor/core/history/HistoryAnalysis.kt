@@ -72,7 +72,7 @@ data class RoomSummary(
 object RoomRanking {
     /** Latest result per room (case-insensitive name), best first. */
     fun rank(records: List<RunRecord>): List<RoomSummary> =
-        records.filter { !it.roomLabel.isNullOrBlank() }
+        records.filter { !it.roomLabel.isNullOrBlank() && it.kind != RunKind.CALL_MONITOR }
             .groupBy { it.roomLabel!!.trim().lowercase() }
             .map { (_, runs) -> runs.maxBy { it.timestampMs } }
             .map {
@@ -98,6 +98,8 @@ object CsvExporter {
         "internet_jitter_ms", "internet_loss_pct", "dns_system_ms", "dns_reference_ms", "throughput_mbps",
         "same_channel_networks", "overlapping_networks", "severity", "layer", "verdict", "fixes",
         "country", "router_channel_24", "suggested_channel_24", "router_channel_5", "suggested_channel_5", "suggested_width_5",
+        "kind", "upload_mbps", "loaded_down_increase_ms", "loaded_up_increase_ms", "udp_rtt_ms", "udp_jitter_ms",
+        "udp_loss_pct", "nat", "internet_p95_ms", "dropouts", "monitor_duration_ms",
     )
 
     fun export(records: List<RunRecord>): String = buildString {
@@ -111,6 +113,8 @@ object CsvExporter {
                 r.dnsSystemMs?.fmt(), r.dnsReferenceMs?.fmt(), r.throughputMbps?.fmt(), r.sameChannelNetworks,
                 r.overlappingNetworks, r.severity.name, r.layer?.name, r.verdict, r.fixes.joinToString(" | "),
                 r.countryCode, r.routerChannel24, r.suggestedChannel24, r.routerChannel5, r.suggestedChannel5, r.suggestedWidth5,
+                r.kind.name, r.uploadMbps?.fmt(), r.loadedDownIncreaseMs?.fmt(), r.loadedUpIncreaseMs?.fmt(), r.udpRttMs?.fmt(),
+                r.udpJitterMs?.fmt(), r.udpLossPercent?.fmt(), r.natBehavior, r.internetP95Ms?.fmt(), r.dropouts, r.monitorDurationMs,
             )
             appendLine(cells.joinToString(",") { escape(it?.toString()) })
         }

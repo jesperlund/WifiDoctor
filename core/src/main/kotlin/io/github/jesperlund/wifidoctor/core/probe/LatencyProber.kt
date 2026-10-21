@@ -20,6 +20,11 @@ interface LatencyProber {
     suspend fun probe(host: String, count: Int, timeoutMs: Int): ProbeStats
 }
 
+/** One round-trip sample, for continuous monitoring. Null means the probe was lost. */
+fun interface RttProbe {
+    suspend fun rtt(host: String, timeoutMs: Int): Double?
+}
+
 /**
  * Times TCP handshakes. A SYN answered with SYN-ACK (port open) or RST (connection refused) is a
  * full round trip, so both count as a reply. Only timeouts and unreachable errors count as loss.
@@ -32,7 +37,23 @@ class TcpConnectProber(
     private val intervalMs: Long = 100,
     private val dispatcher: CoroutineDispatcher = Dispatchers.IO,
     private val nanoTime: () -> Long = System::nanoTime,
-) : LatencyProber {
+) : LatencyProber, RttProbe {
+
+    /** Port that answered last time per host, so continuous sampling costs one handshake per sample. */
+    private val knownPorts = java.util.concurrent.ConcurrentHashMap<String, Int>()
+
+    override suspend fun rtt(host: String, timeoutMs: Int): Double? = withContext(dispatcher) {
+        knownPorts[host]?.let { return@withContext connectOnce(host, it, timeoutMs) }
+        for (candidate in ports) {
+            coroutineContext.ensureActive()
+            val rtt = connectOnce(host, candidate, timeoutMs)
+            if (rtt != null) {
+                knownPorts[host] = candidate
+                return@withContext rtt
+            }
+        }
+        null
+    }
 
     override suspend fun probe(host: String, count: Int, timeoutMs: Int): ProbeStats = withContext(dispatcher) {
         val samples = mutableListOf<Double?>()
@@ -43,6 +64,7 @@ class TcpConnectProber(
             val rtt = connectOnce(host, candidate, timeoutMs)
             if (rtt != null) {
                 port = candidate
+                knownPorts[host] = candidate
                 samples += rtt
                 break
             }

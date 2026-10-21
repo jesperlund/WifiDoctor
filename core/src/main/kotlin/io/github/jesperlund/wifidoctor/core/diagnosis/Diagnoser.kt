@@ -28,6 +28,18 @@ data class DiagnoserConfig(
     val congestedSameChannel: Int = 4,
     val congestedOverlapping: Int = 6,
     val slowThroughputMbps: Double = 5.0,
+    /** Upload needed for HD video calls (Teams recommends ~1.5–4 Mbps). */
+    val slowUploadMbps: Double = 2.0,
+    val verySlowUploadMbps: Double = 0.5,
+    /** Latency increase under load. Roughly bufferbloat grade C (+60 ms) and D (+200 ms). */
+    val bufferbloatWarnMs: Double = 60.0,
+    val bufferbloatFailMs: Double = 200.0,
+    val loadedLossWarnPercent: Double = 5.0,
+    /** Call-quality targets for the UDP path, based on Microsoft's Teams network guidance. */
+    val udpRttWarnMs: Double = 150.0,
+    val udpJitterWarnMs: Double = 30.0,
+    val udpLossWarnPercent: Double = 1.0,
+    val udpLossFailPercent: Double = 5.0,
 )
 
 /** One diagnostic rule. Returns null when the rule does not apply. */
@@ -45,43 +57,39 @@ class Diagnoser(
 ) {
     fun findings(m: Measurements): List<Finding> =
         rules.mapNotNull { it.evaluate(m, config) }
-            .sortedWith(compareByDescending<Finding> { it.severity }.thenBy { it.layer.ordinal })
+            .sortedWith(byPriority)
 
-    fun diagnose(m: Measurements): Diagnosis {
-        val findings = findings(m)
-        val primary = findings.firstOrNull()
-            ?: return Diagnosis(
-                verdict = "Your Wi-Fi looks healthy",
-                severity = Severity.OK,
-                layer = null,
-                explanation = healthyExplanation(m),
-                fixes = emptyList(),
-                findings = emptyList(),
-            )
-        val fixes = LinkedHashSet<String>()
-        findings.forEach { fixes += it.fixes }
-        val others = findings.drop(1)
-        val explanation = buildString {
-            append(primary.explanation)
-            if (others.isNotEmpty()) {
-                append("\n\nAlso noticed: ")
-                append(others.joinToString("; ") { it.title.replaceFirstChar(Char::lowercase) })
-                append('.')
-            }
-        }
-        return Diagnosis(
-            verdict = primary.title,
-            severity = primary.severity,
-            layer = primary.layer,
-            explanation = explanation,
-            fixes = fixes.toList(),
-            findings = findings,
-        )
-    }
+    fun diagnose(m: Measurements): Diagnosis =
+        assemble(findings(m), "Your Wi-Fi looks healthy", healthyExplanation(m))
 
     /** Worst severity found for [layer], or OK. Used for the per-layer progress stepper. */
     fun layerSeverity(m: Measurements, layer: Layer): Severity =
         findings(m).filter { it.layer == layer }.maxOfOrNull { it.severity } ?: Severity.OK
+
+    companion object {
+        /**
+         * Builds a diagnosis from findings sorted by priority: the first is the verdict, the rest are
+         * mentioned, and all fixes are merged in order without duplicates.
+         */
+        fun assemble(findings: List<Finding>, okVerdict: String, okExplanation: String): Diagnosis {
+            val primary = findings.firstOrNull()
+                ?: return Diagnosis(okVerdict, Severity.OK, null, okExplanation, emptyList(), emptyList())
+            val fixes = LinkedHashSet<String>()
+            findings.forEach { fixes += it.fixes }
+            val others = findings.drop(1)
+            val explanation = buildString {
+                append(primary.explanation)
+                if (others.isNotEmpty()) {
+                    append("\n\nAlso noticed: ")
+                    append(others.joinToString("; ") { it.title.replaceFirstChar(Char::lowercase) })
+                    append('.')
+                }
+            }
+            return Diagnosis(primary.title, primary.severity, primary.layer, explanation, fixes.toList(), findings)
+        }
+
+        val byPriority: Comparator<Finding> = compareByDescending<Finding> { it.severity }.thenBy { it.layer.ordinal }
+    }
 
     private fun healthyExplanation(m: Measurements): String = buildString {
         append("Signal, router, internet and DNS all responded normally.")

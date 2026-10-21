@@ -10,10 +10,21 @@ import kotlinx.coroutines.withContext
 import java.net.HttpURLConnection
 import java.net.URL
 
-data class ThroughputProgress(val bytes: Long, val elapsedMs: Long, val mbps: Double?, val fraction: Float)
+data class ThroughputProgress(
+    val bytes: Long,
+    val elapsedMs: Long,
+    val mbps: Double?,
+    val fraction: Float,
+    val upload: Boolean = false,
+)
 
 interface ThroughputTester {
+    /** Download test. */
     suspend fun run(url: String, maxDurationMs: Long, onProgress: (ThroughputProgress) -> Unit = {}): ThroughputResult
+
+    /** Upload test; implementations without one report "not supported". */
+    suspend fun upload(url: String, maxDurationMs: Long, onProgress: (ThroughputProgress) -> Unit = {}): ThroughputResult =
+        ThroughputResult(url, 0, 0, null, error = "Upload test not supported")
 }
 
 /**
@@ -22,7 +33,7 @@ interface ThroughputTester {
  */
 class HttpThroughputTester(
     private val binding: NetworkBinding = NetworkBinding.Default,
-    private val maxBytes: Long = 50L * 1024 * 1024,
+    private val maxBytes: Long = 100L * 1024 * 1024,
     private val connectTimeoutMs: Int = 5_000,
     private val readTimeoutMs: Int = 5_000,
     private val dispatcher: CoroutineDispatcher = Dispatchers.IO,
@@ -80,4 +91,73 @@ class HttpThroughputTester(
                 connection?.disconnect()
             }
         }
+
+    /**
+     * Streams random bytes to [url] with a chunked POST for up to [maxDurationMs]. The rate is
+     * computed after a warm-up second, because the first writes only fill the socket buffer and
+     * would make a slow uplink look fast.
+     */
+    override suspend fun upload(url: String, maxDurationMs: Long, onProgress: (ThroughputProgress) -> Unit): ThroughputResult =
+        withContext(dispatcher) {
+            var bytes = 0L
+            val start = clockMs()
+            var warmBytes = -1L
+            var warmAt = 0L
+            var connection: HttpURLConnection? = null
+            fun rate(now: Long): Double? =
+                if (warmBytes >= 0 && now - warmAt >= 500) ProbeMath.mbps(bytes - warmBytes, now - warmAt) else ProbeMath.mbps(bytes, now - start)
+            try {
+                connection = (binding.openConnection(URL(url)) as HttpURLConnection).apply {
+                    connectTimeout = connectTimeoutMs
+                    readTimeout = readTimeoutMs
+                    doOutput = true
+                    requestMethod = "POST"
+                    useCaches = false
+                    setChunkedStreamingMode(CHUNK)
+                    setRequestProperty("Content-Type", "application/octet-stream")
+                }
+                val chunk = ByteArray(CHUNK).also { kotlin.random.Random.nextBytes(it) } // incompressible
+                var lastReport = start
+                connection.outputStream.use { out ->
+                    while (currentCoroutineContext().isActive) {
+                        out.write(chunk)
+                        bytes += chunk.size
+                        val now = clockMs()
+                        if (warmBytes < 0 && now - start >= WARM_UP_MS) {
+                            warmBytes = bytes
+                            warmAt = now
+                        }
+                        if (now - lastReport >= 200) {
+                            lastReport = now
+                            val fraction = maxOf(bytes.toFloat() / maxBytes, (now - start).toFloat() / maxDurationMs).coerceIn(0f, 1f)
+                            onProgress(ThroughputProgress(bytes, now - start, rate(now), fraction, upload = true))
+                        }
+                        if (bytes >= maxBytes || now - start >= maxDurationMs) break
+                    }
+                }
+                val end = clockMs()
+                val cancelled = !currentCoroutineContext().isActive
+                val code = if (cancelled) 200 else connection.responseCode
+                val mbps = rate(end)
+                onProgress(ThroughputProgress(bytes, end - start, mbps, 1f, upload = true))
+                if (code !in 200..299) {
+                    ThroughputResult(url, bytes, end - start, null, error = "HTTP $code")
+                } else {
+                    ThroughputResult(url, bytes, end - start, mbps, cancelled = cancelled)
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                val now = clockMs()
+                val mbps = if (warmBytes >= 0 && bytes - warmBytes >= 256 * 1024) rate(now) else null
+                ThroughputResult(url, bytes, now - start, mbps, error = e.message ?: e.javaClass.simpleName)
+            } finally {
+                connection?.disconnect()
+            }
+        }
+
+    private companion object {
+        const val CHUNK = 64 * 1024
+        const val WARM_UP_MS = 1_000L
+    }
 }

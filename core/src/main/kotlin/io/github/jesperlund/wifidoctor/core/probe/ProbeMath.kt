@@ -35,6 +35,14 @@ object ProbeMath {
         return bytes * 8.0 / 1_000_000.0 / (durationMs / 1000.0)
     }
 
+    /** Nearest-rank percentile (p in 0..100) of the values, or null when empty. */
+    fun percentile(values: List<Double>, p: Double): Double? {
+        if (values.isEmpty()) return null
+        val sorted = values.sorted()
+        val rank = kotlin.math.ceil(p / 100.0 * sorted.size).toInt().coerceIn(1, sorted.size)
+        return sorted[rank - 1]
+    }
+
     fun median(values: List<Double>): Double? {
         if (values.isEmpty()) return null
         val sorted = values.sorted()

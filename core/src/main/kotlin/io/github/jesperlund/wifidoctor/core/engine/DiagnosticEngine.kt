@@ -3,6 +3,20 @@ package io.github.jesperlund.wifidoctor.core.engine
 import io.github.jesperlund.wifidoctor.core.diagnosis.Diagnoser
 import io.github.jesperlund.wifidoctor.core.model.Diagnosis
 import io.github.jesperlund.wifidoctor.core.model.Layer
+import io.github.jesperlund.wifidoctor.core.model.LoadedLatency
+import io.github.jesperlund.wifidoctor.core.model.NatBehavior
+import io.github.jesperlund.wifidoctor.core.model.ProbeStats
+import io.github.jesperlund.wifidoctor.core.model.RealtimeResult
+import io.github.jesperlund.wifidoctor.core.model.StunServer
+import io.github.jesperlund.wifidoctor.core.model.ThroughputResult
+import io.github.jesperlund.wifidoctor.core.probe.ProbeMath
+import io.github.jesperlund.wifidoctor.core.probe.RealtimeTester
+import io.github.jesperlund.wifidoctor.core.probe.RttProbe
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import io.github.jesperlund.wifidoctor.core.model.LinkInfo
 import io.github.jesperlund.wifidoctor.core.model.Measurements
 import io.github.jesperlund.wifidoctor.core.model.ScanSnapshot
@@ -40,12 +54,26 @@ data class RunConfig(
     val throughputUrl: String = DEFAULT_THROUGHPUT_URL,
     val runThroughput: Boolean = true,
     val throughputMaxDurationMs: Long = 10_000,
+    val uploadUrl: String = DEFAULT_UPLOAD_URL,
+    val uploadMaxDurationMs: Long = 8_000,
+    /** Latency samples taken while the download/upload runs, to measure bufferbloat. */
+    val loadedProbeIntervalMs: Long = 250,
+    val loadedProbeTimeoutMs: Int = 2_000,
+    val loadedWarmUpMs: Long = 500,
+    val runRealtime: Boolean = true,
+    val stunServers: List<StunServer> = StunServer.DEFAULTS,
+    /** 15 packets 50 ms apart: a short burst shaped like call audio. */
+    val stunSamples: Int = 15,
+    val stunIntervalMs: Long = 50,
+    val stunTimeoutMs: Int = 500,
     val runScan: Boolean = true,
     /** Country hints for channel regulations; access-point country elements are added from the scan. */
     val regionHints: RegionHints = RegionHints(),
 ) {
     companion object {
-        const val DEFAULT_THROUGHPUT_URL = "https://speed.cloudflare.com/__down?bytes=25000000"
+        // Large enough to keep a fast line busy for a few seconds, so latency under load can be sampled.
+        const val DEFAULT_THROUGHPUT_URL = "https://speed.cloudflare.com/__down?bytes=100000000"
+        const val DEFAULT_UPLOAD_URL = "https://speed.cloudflare.com/__up"
     }
 }
 
@@ -65,7 +93,8 @@ sealed interface EngineEvent {
 }
 
 /**
- * Runs the layered checks in order (link → gateway → internet → DNS → throughput → congestion),
+ * Runs the layered checks in order (link → gateway → internet → DNS → speed → under load → UDP →
+ * congestion),
  * emitting progress as it goes. Cancelling the collector cancels any probe in flight.
  */
 class DiagnosticEngine(
@@ -76,6 +105,10 @@ class DiagnosticEngine(
     private val throughputTester: ThroughputTester,
     private val diagnoser: Diagnoser = Diagnoser(),
     private val clock: () -> Long = System::currentTimeMillis,
+    /** Tests UDP for calls; null skips that layer. */
+    private val realtimeTester: RealtimeTester? = null,
+    /** Single-sample prober used while the line is loaded. */
+    private val rttProbe: RttProbe = RttProbe { host, timeout -> prober.probe(host, 1, timeout).avgMs },
 ) {
 
     fun run(config: RunConfig = RunConfig()): Flow<EngineEvent> = channelFlow {
@@ -126,16 +159,44 @@ class DiagnosticEngine(
         m = m.copy(dns = dns)
         finish(Layer.DNS, dns.systemAvgMs?.let { "${it.toInt()} ms (reference ${dns.referenceAvgMs?.toInt() ?: "–"} ms)" } ?: "Lookups failed")
 
-        // 5. Throughput
+        // 5. Throughput (download, then upload), sampling latency while each runs
         send(EngineEvent.StepStarted(Layer.THROUGHPUT))
         if (!config.runThroughput) {
             skip(Layer.THROUGHPUT, "Speed test turned off")
         } else {
-            val result = throughputTester.run(config.throughputUrl, config.throughputMaxDurationMs) { progress ->
-                trySend(EngineEvent.Throughput(progress))
+            val target = config.internetTargets.first()
+            val (down, downLoaded) = sampleLatencyDuring(target, config) {
+                throughputTester.run(config.throughputUrl, config.throughputMaxDurationMs) { trySend(EngineEvent.Throughput(it)) }
             }
-            m = m.copy(throughput = result)
-            finish(Layer.THROUGHPUT, result.mbps?.let { "%.1f Mbps".format(it) } ?: (result.error ?: "No data"))
+            val (up, upLoaded) = sampleLatencyDuring(target, config) {
+                throughputTester.upload(config.uploadUrl, config.uploadMaxDurationMs) { trySend(EngineEvent.Throughput(it)) }
+            }
+            m = m.copy(
+                throughput = down,
+                upload = up,
+                loaded = LoadedLatency(target, m.internet.firstOrNull { it.target == target }, downLoaded, upLoaded),
+            )
+            finish(Layer.THROUGHPUT, throughputSummary(down, up))
+        }
+
+        // 6. Latency under load (measured during step 5)
+        send(EngineEvent.StepStarted(Layer.LOAD))
+        val loaded = m.loaded
+        if (loaded == null) {
+            skip(Layer.LOAD, "Needs the speed test")
+        } else {
+            finish(Layer.LOAD, loadedSummary(loaded))
+        }
+
+        // 7. Real-time (UDP) path used by calls
+        send(EngineEvent.StepStarted(Layer.REALTIME))
+        val realtime = realtimeTester
+        if (realtime == null || !config.runRealtime || config.stunServers.isEmpty()) {
+            skip(Layer.REALTIME, "UDP test turned off")
+        } else {
+            val r = realtime.test(config.stunServers, config.stunSamples, config.stunIntervalMs, config.stunTimeoutMs)
+            m = m.copy(realtime = r)
+            finish(Layer.REALTIME, realtimeSummary(r))
         }
 
         // 6. Congestion
@@ -171,7 +232,45 @@ class DiagnosticEngine(
         return if (rawFail) StepState.FAIL else diagnoser.layerSeverity(m, layer).toStepState()
     }
 
+    /** Runs [block] while sampling round trips to [target] in parallel; returns its result and the samples. */
+    private suspend fun <T> sampleLatencyDuring(target: String, config: RunConfig, block: suspend () -> T): Pair<T, ProbeStats?> =
+        coroutineScope {
+            val samples = mutableListOf<Double?>()
+            val sampler = launch {
+                delay(config.loadedWarmUpMs) // let the transfer ramp up first
+                while (isActive) {
+                    samples += rttProbe.rtt(target, config.loadedProbeTimeoutMs)
+                    delay(config.loadedProbeIntervalMs)
+                }
+            }
+            val result = block()
+            sampler.cancelAndJoin()
+            result to samples.takeIf { it.size >= MIN_LOADED_SAMPLES }?.let { ProbeMath.stats(target, it) }
+        }
+
     companion object {
+        private const val MIN_LOADED_SAMPLES = 3
+
+        fun throughputSummary(down: ThroughputResult, up: ThroughputResult): String {
+            fun fmt(r: ThroughputResult) = r.mbps?.let { "%.1f Mbps".format(it) } ?: (r.error ?: "no data")
+            return "↓ ${fmt(down)} · ↑ ${fmt(up)}"
+        }
+
+        fun loadedSummary(l: LoadedLatency): String {
+            val parts = listOfNotNull(
+                l.downloadIncreaseMs?.let { "+${it.toInt()} ms downloading" },
+                l.uploadIncreaseMs?.let { "+${it.toInt()} ms uploading" },
+            )
+            return if (parts.isEmpty()) "Too few samples (transfer too short)" else parts.joinToString(", ")
+        }
+
+        fun realtimeSummary(r: RealtimeResult): String {
+            val best = r.best ?: return "No UDP replies"
+            val s = best.stats
+            return "${s.avgMs?.toInt()} ms, ${"%.0f".format(s.lossPercent)}% loss, ${s.jitterMs?.toInt() ?: 0} ms jitter" +
+                (if (r.nat == NatBehavior.SYMMETRIC) " · symmetric NAT" else "")
+        }
+
         fun congestionSummary(m: Measurements, throttled: Boolean): String {
             val c = m.congestion
             val base = if (c == null) "Channel unknown" else "${c.sameChannel} same, ${c.overlapping} overlapping"

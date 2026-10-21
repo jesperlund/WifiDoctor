@@ -3,6 +3,13 @@ package io.github.jesperlund.wifidoctor.core.engine
 import io.github.jesperlund.wifidoctor.core.Fixtures
 import io.github.jesperlund.wifidoctor.core.Fixtures.scanEntry
 import io.github.jesperlund.wifidoctor.core.model.Layer
+import io.github.jesperlund.wifidoctor.core.model.NatBehavior
+import io.github.jesperlund.wifidoctor.core.model.ProbeMethod
+import io.github.jesperlund.wifidoctor.core.model.RealtimeResult
+import io.github.jesperlund.wifidoctor.core.model.StunServer
+import io.github.jesperlund.wifidoctor.core.model.UdpProbeResult
+import io.github.jesperlund.wifidoctor.core.probe.RealtimeTester
+import io.github.jesperlund.wifidoctor.core.probe.RttProbe
 import io.github.jesperlund.wifidoctor.core.model.ProbeStats
 import io.github.jesperlund.wifidoctor.core.model.ScanSnapshot
 import io.github.jesperlund.wifidoctor.core.model.Severity
@@ -38,12 +45,43 @@ class FakeDns(private val system: Double?, private val reference: Double?) : Dns
     }
 }
 
-class FakeThroughput(private val mbps: Double?) : ThroughputTester {
+class FakeThroughput(
+    private val mbps: Double?,
+    private val uploadMbps: Double? = 50.0,
+    /** Virtual time each transfer takes, so latency can be sampled under load. */
+    private val transferMs: Long = 0,
+) : ThroughputTester {
     var calls = 0
+    var uploads = 0
     override suspend fun run(url: String, maxDurationMs: Long, onProgress: (ThroughputProgress) -> Unit): ThroughputResult {
         calls++
         onProgress(ThroughputProgress(1, 1, mbps, 0.5f))
+        if (transferMs > 0) kotlinx.coroutines.delay(transferMs)
         return ThroughputResult(url, 1_000_000, 1_000, mbps)
+    }
+
+    override suspend fun upload(url: String, maxDurationMs: Long, onProgress: (ThroughputProgress) -> Unit): ThroughputResult {
+        uploads++
+        onProgress(ThroughputProgress(1, 1, uploadMbps, 0.5f, upload = true))
+        if (transferMs > 0) kotlinx.coroutines.delay(transferMs)
+        return ThroughputResult(url, 1_000_000, 1_000, uploadMbps)
+    }
+}
+
+class FakeRealtime(private val result: RealtimeResult) : RealtimeTester {
+    var calls = 0
+    override suspend fun test(servers: List<StunServer>, samples: Int, intervalMs: Long, timeoutMs: Int): RealtimeResult {
+        calls++
+        return result
+    }
+
+    companion object {
+        fun good() = FakeRealtime(
+            RealtimeResult(
+                listOf(UdpProbeResult(StunServer.DEFAULTS[0], ProbeMath.stats("cf", List(15) { 20.0 }, ProbeMethod.UDP), "203.0.113.5:4000")),
+                NatBehavior.ENDPOINT_INDEPENDENT,
+            ),
+        )
     }
 }
 
@@ -58,7 +96,13 @@ class DiagnosticEngineTest {
             listOf(scanEntry(ssid = Fixtures.SSID, bssid = Fixtures.BSSID_5, freq = 5180, rssi = -50, width = 80)),
             throttled = false,
         ),
-    ) = DiagnosticEngine({ link }, { scan }, prober, dns, throughput, clock = { 42L })
+        realtime: RealtimeTester? = FakeRealtime.good(),
+        rttProbe: RttProbe? = null,
+    ) = if (rttProbe == null) {
+        DiagnosticEngine({ link }, { scan }, prober, dns, throughput, clock = { 42L }, realtimeTester = realtime)
+    } else {
+        DiagnosticEngine({ link }, { scan }, prober, dns, throughput, clock = { 42L }, realtimeTester = realtime, rttProbe = rttProbe)
+    }
 
     @Test
     fun `runs every layer in order and finishes healthy`() = runTest {
@@ -72,6 +116,57 @@ class DiagnosticEngineTest {
         assertEquals(Severity.OK, done.diagnosis.severity)
         assertEquals(42L, done.measurements.timestampMs)
         assertTrue(events.any { it is EngineEvent.Throughput })
+    }
+
+    @Test
+    fun `latency under load is compared with idle latency`() = runTest {
+        // Idle probes answer in 5 ms (FakeProber); under load the line queues: 300 ms.
+        val events = engine(throughput = FakeThroughput(100.0, transferMs = 3_000), rttProbe = RttProbe { _, _ -> 300.0 }).run().toList()
+        val done = events.last() as EngineEvent.Finished
+        val loaded = done.measurements.loaded!!
+        assertEquals(295.0, loaded.downloadIncreaseMs!!, 1e-9)
+        assertEquals(295.0, loaded.uploadIncreaseMs!!, 1e-9)
+        assertTrue(loaded.download!!.sent >= 8)
+        val load = events.filterIsInstance<EngineEvent.StepFinished>().first { it.layer == Layer.LOAD }
+        assertEquals(StepState.FAIL, load.state)
+        assertTrue(load.summary.contains("+295 ms downloading"))
+        assertTrue(done.diagnosis.findings.any { it.ruleId == "bufferbloat" })
+    }
+
+    @Test
+    fun `upload is measured after the download`() = runTest {
+        val t = FakeThroughput(100.0, uploadMbps = 1.0)
+        val events = engine(throughput = t).run().toList()
+        assertEquals(1, t.uploads)
+        val step = events.filterIsInstance<EngineEvent.StepFinished>().first { it.layer == Layer.THROUGHPUT }
+        assertEquals("↓ 100.0 Mbps · ↑ 1.0 Mbps", step.summary)
+        assertTrue((events.last() as EngineEvent.Finished).diagnosis.findings.any { it.ruleId == "slow_upload" })
+        assertTrue(events.any { it is EngineEvent.Throughput && it.progress.upload })
+    }
+
+    @Test
+    fun `blocked UDP fails the call layer`() = runTest {
+        val blocked = FakeRealtime(
+            RealtimeResult(
+                StunServer.DEFAULTS.map { UdpProbeResult(it, ProbeMath.stats(it.label, List(15) { null }, ProbeMethod.UDP), null) },
+                NatBehavior.UNKNOWN,
+            ),
+        )
+        val events = engine(realtime = blocked).run().toList()
+        val step = events.filterIsInstance<EngineEvent.StepFinished>().first { it.layer == Layer.REALTIME }
+        assertEquals(StepState.FAIL, step.state)
+        assertEquals("No UDP replies", step.summary)
+        assertEquals("udp_blocked", (events.last() as EngineEvent.Finished).diagnosis.findings.first().ruleId)
+    }
+
+    @Test
+    fun `call layer is skipped without a tester or when turned off`() = runTest {
+        val r = FakeRealtime.good()
+        val off = engine(realtime = r).run(RunConfig(runRealtime = false)).toList()
+        assertEquals(0, r.calls)
+        assertEquals(StepState.SKIPPED, off.filterIsInstance<EngineEvent.StepFinished>().first { it.layer == Layer.REALTIME }.state)
+        val none = engine(realtime = null).run().toList()
+        assertEquals(StepState.SKIPPED, none.filterIsInstance<EngineEvent.StepFinished>().first { it.layer == Layer.REALTIME }.state)
     }
 
     @Test
@@ -141,7 +236,9 @@ class DiagnosticEngineTest {
         assertEquals(0, t.calls)
         val step = events.filterIsInstance<EngineEvent.StepFinished>().first { it.layer == Layer.THROUGHPUT }
         assertEquals(StepState.SKIPPED, step.state)
+        assertEquals(StepState.SKIPPED, events.filterIsInstance<EngineEvent.StepFinished>().first { it.layer == Layer.LOAD }.state)
         assertNull((events.last() as EngineEvent.Finished).measurements.throughput)
+        assertEquals(0, t.uploads)
     }
 
     @Test
