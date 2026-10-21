@@ -56,6 +56,10 @@ jobs:
                   t += int(r.get("tests")); f += int(r.get("failures")); e += int(r.get("errors")); s += int(r.get("skipped"))
               line = f"{module}: {t} tests, {f} failures, {e} errors, {s} skipped"
               print(line)
+              for path in glob.glob(f"{module}/build/test-results/**/*.xml", recursive=True):
+                  for case in ET.parse(path).getroot().iter("testcase"):
+                      for bad in list(case.iter("failure")) + list(case.iter("error")):
+                          print(f"  FAILED {case.get('classname')} > {case.get('name')}: {(bad.get('message') or '')[:300]}")
               with open(__import__("os").environ["GITHUB_STEP_SUMMARY"], "a") as out:
                   out.write(line + "\n\n")
           PY

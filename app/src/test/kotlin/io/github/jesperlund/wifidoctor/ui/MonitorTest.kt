@@ -13,7 +13,6 @@ import io.github.jesperlund.wifidoctor.ui.monitor.MonitorViewModel
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
-import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.currentTime
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
@@ -113,7 +112,7 @@ class MonitorTest {
         vm.start()
         assertEquals(120_000L, (c.state.value as MonitorState.Running).durationMs)
         vm.stop()
-        advanceUntilIdle()
+        advanceTimeBy(1_000) // background work does not run under advanceUntilIdle()
         assertTrue(c.state.value is MonitorState.Finished)
     }
 }
